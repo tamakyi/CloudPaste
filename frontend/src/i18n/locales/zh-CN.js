@@ -35,18 +35,18 @@ export default {
 
   // 应用标题
   app: {
-    title: "狼的剪贴板",
+    title: "CloudPaste",
   },
 
   // 页面标题
   pageTitle: {
-    home: "狼的剪贴板 - 在线剪贴板",
-    upload: "文件上传 - 狼的剪贴板",
-    admin: "管理面板 - 狼的剪贴板",
-    pasteView: "查看分享 - 狼的剪贴板",
-    fileView: "文件预览 - 狼的剪贴板",
-    mountExplorer: "挂载浏览 - 狼的剪贴板",
-    notFound: "页面未找到 - 狼的剪贴板",
+    home: "CloudPaste - 在线剪贴板",
+    upload: "文件上传 - CloudPaste",
+    admin: "管理面板 - CloudPaste",
+    pasteView: "查看分享 - CloudPaste",
+    fileView: "文件预览 - CloudPaste",
+    mountExplorer: "挂载浏览 - CloudPaste",
+    notFound: "页面未找到 - CloudPaste",
     // 管理模块标题
     adminModules: {
       dashboard: "仪表板",
@@ -78,7 +78,7 @@ export default {
 
   // 底部版权
   footer: {
-    copyright: "© {year} 狼的剪贴板. 保留所有权利。",
+    copyright: "© {year} CloudPaste. 保留所有权利。",
   },
 
   // 面包屑导航
@@ -1010,7 +1010,6 @@ export default {
     toggle: "切换语言",
     zh: "中文",
     en: "English",
-    ja: "日本语",
   },
 
   // Markdown编辑器模块

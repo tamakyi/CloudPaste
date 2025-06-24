@@ -44,7 +44,7 @@ const routes = [
     name: "Home",
     component: MarkdownEditor,
     meta: {
-      title: "狼的剪贴板 - 这里复制，那里粘贴",
+      title: "CloudPaste - 在线剪贴板",
       originalPage: "home",
     },
   },
@@ -53,7 +53,7 @@ const routes = [
     name: "Upload",
     component: FileUploadPage,
     meta: {
-      title: "文件上传 - 狼的剪贴板",
+      title: "文件上传 - CloudPaste",
       originalPage: "upload",
     },
   },
@@ -65,7 +65,7 @@ const routes = [
       activeModule: route.params.module || "dashboard",
     }),
     meta: {
-      title: "管理面板 - 狼的剪贴板",
+      title: "管理面板 - CloudPaste",
       originalPage: "admin",
       requiresAuth: true,
     },
@@ -78,7 +78,7 @@ const routes = [
       activeModule: route.params.module,
     }),
     meta: {
-      title: "管理面板 - 狼的剪贴板",
+      title: "管理面板 - CloudPaste",
       originalPage: "admin",
       requiresAuth: true,
     },
@@ -89,7 +89,7 @@ const routes = [
     component: PasteView,
     props: true,
     meta: {
-      title: "查看分享 - 狼的剪贴板",
+      title: "查看分享 - CloudPaste",
       originalPage: "paste-view",
     },
   },
@@ -99,7 +99,7 @@ const routes = [
     component: FileView,
     props: true,
     meta: {
-      title: "文件预览 - 狼的剪贴板",
+      title: "文件预览 - CloudPaste",
       originalPage: "file-view",
     },
   },
@@ -111,7 +111,7 @@ const routes = [
       darkMode: route.meta.darkMode || false,
     }),
     meta: {
-      title: "挂载浏览 - 狼的剪贴板",
+      title: "挂载浏览 - CloudPaste",
       originalPage: "mount-explorer",
     },
     children: [
@@ -132,7 +132,7 @@ const routes = [
     name: "NotFound",
     redirect: "/",
     meta: {
-      title: "页面未找到 - 狼的剪贴板",
+      title: "页面未找到 - CloudPaste",
     },
   },
 ];
@@ -197,7 +197,7 @@ router.onError((error) => {
 // 路由后置守卫 - 处理页面标题和调试信息
 router.afterEach(async (to, from) => {
   // 动态设置页面标题，支持国际化
-  let title = "狼的剪贴板";
+  let title = "CloudPaste";
 
   try {
     // 动态导入 i18n 实例
@@ -229,7 +229,7 @@ router.afterEach(async (to, from) => {
           const moduleKey = moduleKeyMap[to.params.module];
           if (moduleKey) {
             const moduleName = t(`pageTitle.adminModules.${moduleKey}`);
-            title = `${moduleName} - 狼的剪贴板`;
+            title = `${moduleName} - CloudPaste`;
           } else {
             title = t("pageTitle.admin");
           }
@@ -252,11 +252,11 @@ router.afterEach(async (to, from) => {
         title = t("pageTitle.notFound");
         break;
       default:
-        title = to.meta?.title || "狼的剪贴板";
+        title = to.meta?.title || "CloudPaste";
     }
   } catch (error) {
     console.warn("无法加载国际化标题，使用默认标题:", error);
-    title = to.meta?.title || "狼的剪贴板";
+    title = to.meta?.title || "CloudPaste";
   }
 
   document.title = title;

@@ -20,11 +20,7 @@
 
     <!-- 当前语言指示器 -->
     <span class="absolute top-0 right-0 inline-flex items-center justify-center h-3 w-3 rounded-full bg-blue-500 text-xs text-white">
-      {{ 
-        currentLanguage === "zh-CN" ? "zh" : 
-        currentLanguage === "ja-JP" ? "ja" : 
-        "en" 
-      }}
+      {{ currentLanguage === "zh-CN" ? "zh" : "en" }}
     </span>
 
     <!-- 语言选择下拉菜单 -->
@@ -54,17 +50,6 @@
         ]"
       >
         {{ $t("language.en") }}
-      </a>
-      <a
-        href="#"
-        @click.prevent="changeLanguage('ja-JP')"
-        class="block px-4 py-2 text-sm"
-        :class="[
-          currentLanguage === 'ja-JP' ? (darkMode ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-900') : '',
-          darkMode ? 'text-gray-300 hover:bg-gray-700 hover:text-white' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900',
-        ]"
-      >
-        {{ $t("language.ja") }}
       </a>
     </div>
   </button>
