@@ -14,6 +14,7 @@ const getBrowserLanguage = () => {
   }
   else {
     return "en-US";
+  }
 };
 
 // 获取保存的语言设置，如果没有则使用浏览器语言
