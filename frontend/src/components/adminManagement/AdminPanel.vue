@@ -208,7 +208,7 @@ onUnmounted(() => {
           <!-- 桌面端标题 -->
           <div class="flex items-center h-16 flex-shrink-0 px-4 border-b" :class="darkMode ? 'border-gray-700' : 'border-gray-200'">
             <h1 class="text-lg font-medium" :class="darkMode ? 'text-white' : 'text-gray-900'">
-              CloudPaste {{ loginType === "admin" ? $t("admin.title.admin") : $t("admin.title.user") }}
+              狼的剪贴板 {{ loginType === "admin" ? $t("admin.title.admin") : $t("admin.title.user") }}
             </h1>
           </div>
 

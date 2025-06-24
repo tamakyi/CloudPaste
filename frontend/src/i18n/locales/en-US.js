@@ -35,18 +35,18 @@ export default {
 
   // App title
   app: {
-    title: "CloudPaste",
+    title: "狼的剪贴板",
   },
 
   // Page titles
   pageTitle: {
-    home: "CloudPaste - Online Clipboard",
-    upload: "File Upload - CloudPaste",
-    admin: "Admin Panel - CloudPaste",
-    pasteView: "View Share - CloudPaste",
-    fileView: "File Preview - CloudPaste",
-    mountExplorer: "Mount Explorer - CloudPaste",
-    notFound: "Page Not Found - CloudPaste",
+    home: "狼的剪贴板 - Online Clipboard",
+    upload: "File Upload - 狼的剪贴板",
+    admin: "Admin Panel - 狼的剪贴板",
+    pasteView: "View Share - 狼的剪贴板",
+    fileView: "File Preview - 狼的剪贴板",
+    mountExplorer: "Mount Explorer - 狼的剪贴板",
+    notFound: "Page Not Found - 狼的剪贴板",
     // Admin module titles
     adminModules: {
       dashboard: "Dashboard",
@@ -78,7 +78,7 @@ export default {
 
   // Footer copyright
   footer: {
-    copyright: "© {year} CloudPaste. All rights reserved.",
+    copyright: "© {year} 狼的剪贴板. All rights reserved.",
   },
 
   // Breadcrumb navigation
@@ -1010,6 +1010,7 @@ export default {
     toggle: "Toggle language",
     zh: "中文",
     en: "English",
+    ja: "日本语",
   },
 
   // Markdown editor module
