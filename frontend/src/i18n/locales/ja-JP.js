@@ -5,6 +5,11 @@ export default {
     loading: "読み込み中...",
     confirm: "確認",
 
+    // 通用权限提示More actions
+    noPermission: "この機能の権限がありません。管理者に連絡してください。",
+    contactAdmin: "管理者に連絡",
+    permissionDenied: "権限が不足しています",
+
     // 分页组件
     pagination: {
       // 移动端
@@ -118,8 +123,6 @@ export default {
     },
     permissionDenied: {
       title: "権限が不足しています",
-      message: "この機能にアクセスする権限がありません。",
-      suggestion: "管理者に連絡して必要な権限を取得してください。",
     },
 
     // 登录面板
@@ -1086,13 +1089,11 @@ export default {
 
     // ステータスメッセージ
     messages: {
-      noPermission: "共有を作成する権限がありません",
       contentEmpty: "内容は必須です",
       creating: "共有を作成中...",
       createSuccess: "共有が正常に作成されました！",
       createFailed: "保存に失敗しました",
       linkOccupied: "リンクサフィックスは既に使用されています、別のものを使用してください",
-      permissionDenied: "権限が不足しており、共有を作成できません",
       contentTooLarge: "内容が大きすぎます、長さを減らしてください",
       unknownError: "不明なエラー",
       editorNotReady: "エディターの準備ができていません",
