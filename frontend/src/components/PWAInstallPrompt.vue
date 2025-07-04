@@ -144,7 +144,7 @@ onUnmounted(() => {
             </svg>
           </div>
           <div class="flex-1 min-w-0">
-            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">安装 CloudPaste</h3>
+            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">安装 狼的剪贴板</h3>
             <p :class="['text-sm mt-1', darkMode ? 'text-gray-300' : 'text-gray-600']">安装到您的设备以获得更好的体验</p>
             <div class="flex space-x-2 mt-3">
               <button
