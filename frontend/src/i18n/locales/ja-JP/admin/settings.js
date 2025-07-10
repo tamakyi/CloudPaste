@@ -42,4 +42,15 @@ export default {
       "processing": "処理中...",
       "updateSettings": "設定を更新",
       "updateAccount": "アカウントを更新",
-      "adminUpdateSuccess": "管理者情報の更新に成功しました。自動的にログアウ
+      "adminUpdateSuccess": "管理者情報の更新が成功しました。間もなく自動的にログアウトされます。",
+      "errors": {
+          "maxUploadSizeError": "最大アップロードサイズは0より大きくする必要があります",
+          "updateSettingsError": "システム設定の更新に失敗しました",
+          "currentPasswordRequired": "現在のパスワードを入力してください",
+          "newFieldRequired": "新しいユーザー名または新しいパスワードのいずれかを少なくとも1つ入力してください",
+          "passwordSame": "新しいパスワードは現在のパスワードと同じにできません",
+          "updateInfoError": "管理者情報の更新に失敗しました"
+      }
+    }
+  }
+};
