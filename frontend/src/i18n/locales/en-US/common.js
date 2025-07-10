@@ -29,16 +29,16 @@ export default {
     },
   },
   app: {
-    title: "CloudPaste",
+    title: "CtrlCV",
   },
   pageTitle: {
-    home: "CloudPaste - Online Clipboard",
-    upload: "File Upload - CloudPaste",
-    admin: "Admin Panel - CloudPaste",
-    pasteView: "View Share - CloudPaste",
-    fileView: "File Preview - CloudPaste",
-    mountExplorer: "Mount Explorer - CloudPaste",
-    notFound: "Page Not Found - CloudPaste",
+    home: "CtrlCV - Ctrl+C Ctrl+V",
+    upload: "File Upload - CtrlCV",
+    admin: "Admin Panel - CtrlCV",
+    pasteView: "View Share - CtrlCV",
+    fileView: "File Preview - CtrlCV",
+    mountExplorer: "Mount Explorer - CtrlCV",
+    notFound: "Page Not Found - CtrlCV",
     adminModules: {
       dashboard: "Dashboard",
       textManagement: "Text Management",
@@ -69,5 +69,6 @@ export default {
     toggle: "Toggle language",
     zh: "中文",
     en: "English",
+    ja: "日本語",
   },
 };

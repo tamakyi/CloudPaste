@@ -625,7 +625,7 @@ export function useFileBasket() {
 
       // 下载ZIP文件
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
-      const zipFileName = `CloudPaste_${timestamp}.zip`;
+      const zipFileName = `狼的剪贴板_${timestamp}.zip`;
 
       saveAs(zipBlob, zipFileName);
 

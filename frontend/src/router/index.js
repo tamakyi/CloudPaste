@@ -274,7 +274,7 @@ router.afterEach(async (to, from) => {
           const moduleKey = moduleKeyMap[to.params.module];
           if (moduleKey) {
             const moduleName = t(`pageTitle.adminModules.${moduleKey}`);
-            title = `${moduleName} - CloudPaste`;
+            title = `${moduleName} - 狼的剪贴板`;
           } else {
             title = t("pageTitle.admin");
           }
@@ -296,11 +296,11 @@ router.afterEach(async (to, from) => {
         title = t("pageTitle.notFound");
         break;
       default:
-        title = to.meta?.title || "CloudPaste";
+        title = to.meta?.title || "狼的剪贴板";
     }
   } catch (error) {
     console.warn("无法加载国际化标题，使用默认标题:", error);
-    title = to.meta?.title || "CloudPaste";
+    title = to.meta?.title || "狼的剪贴板";
   }
 
   document.title = title;

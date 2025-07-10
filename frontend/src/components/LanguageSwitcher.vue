@@ -20,7 +20,11 @@
 
     <!-- 当前语言指示器 -->
     <span class="absolute top-0 right-0 inline-flex items-center justify-center h-3 w-3 rounded-full bg-blue-500 text-xs text-white">
-      {{ currentLanguage === "zh-CN" ? "zh" : "en" }}
+      {{ 
+        currentLanguage === "zh-CN" ? "zh" : 
+        currentLanguage === "ja-JP" ? "ja" : 
+        "en" 
+      }}
     </span>
 
     <!-- 语言选择下拉菜单 -->

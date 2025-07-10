@@ -1,14 +1,17 @@
 import { createI18n } from "vue-i18n";
 import zhCN from "./locales/zh-CN/index.js";
 import enUS from "./locales/en-US/index.js";
+import jaJP from "./locales/ja-JP/index.js";
 
 // 获取浏览器语言设置
 const getBrowserLanguage = () => {
   const browserLang = navigator.language || navigator.userLanguage;
-  if (browserLang.startsWith("zh")) {
+  if (browserLang.startsWith("ja")) {  // 新增日语判断
+    return "ja-JP";
+  } else if (browserLang.startsWith("zh")) {  // 保持原有中文判断
     return "zh-CN";
   }
-  return "en-US";
+  return "en-US";  // 默认英文
 };
 
 // 获取保存的语言设置，如果没有则使用浏览器语言
@@ -30,6 +33,7 @@ const i18n = createI18n({
   messages: {
     "zh-CN": zhCN,
     "en-US": enUS,
+    "ja-JP": jaJP,
   },
   // 确保正确处理日期和数字等格式化
   globalInjection: true,

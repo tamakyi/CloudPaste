@@ -59,6 +59,27 @@ const translations = {
     neverExpires: "Never expires",
     expired: "Expired",
   },
+  "ja-JP": {
+    unknown: "不明",
+    dateInvalid: "日付が無効です",
+    dateFormatError: "日付形式が無効です",
+    soon: "間もなく",
+    justNow: "ただいま",
+    minutesAgo: "{count}分前",
+    minutesLater: "{count}分後",
+    hoursAgo: "{count}時間前",
+    hoursLater: "{count}時間後",
+    daysAgo: "{count}日前",
+    daysLater: "{count}日後",
+    weeksAgo: "{count}週間前",
+    weeksLater: "{count}週間後",
+    monthsAgo: "{count}ヶ月前",
+    monthsLater: "{count}ヶ月後",
+    yearsAgo: "{count}年前",
+    yearsLater: "{count}年後",
+    neverExpires: "期限なし",
+    expired: "期限切れ",
+  },
 };
 
 // 获取翻译文本

@@ -160,9 +160,9 @@ export default defineConfig(({ command, mode }) => {
         },
         includeAssets: ["favicon.ico", "apple-touch-icon.png", "robots.txt"],
         manifest: {
-          name: "CloudPaste",
-          short_name: "CloudPaste",
-          description: "安全分享您的内容，支持 Markdown 编辑和文件上传",
+          name: "狼的剪贴板",
+          short_name: "狼的剪贴板",
+          description: "狼的剪贴板 - 这里复制，那里粘贴",
           theme_color: "#0ea5e9",
           background_color: "#ffffff",
           display: "standalone",

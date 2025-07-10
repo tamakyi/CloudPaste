@@ -32,16 +32,16 @@ export default {
     },
   },
   app: {
-    title: "CloudPaste",
+    title: "狼的剪贴板",
   },
   pageTitle: {
-    home: "CloudPaste - 在线剪贴板",
-    upload: "文件上传 - CloudPaste",
-    admin: "管理面板 - CloudPaste",
-    pasteView: "查看分享 - CloudPaste",
-    fileView: "文件预览 - CloudPaste",
-    mountExplorer: "挂载浏览 - CloudPaste",
-    notFound: "页面未找到 - CloudPaste",
+    home: "狼的剪贴板 - 这里复制，那里粘贴",
+    upload: "文件上传 - 狼的剪贴板",
+    admin: "管理面板 - 狼的剪贴板",
+    pasteView: "查看分享 - 狼的剪贴板",
+    fileView: "文件预览 - 狼的剪贴板",
+    mountExplorer: "挂载浏览 - 狼的剪贴板",
+    notFound: "页面未找到 - 狼的剪贴板",
     adminModules: {
       dashboard: "仪表板",
       textManagement: "文本管理",
@@ -66,11 +66,12 @@ export default {
     auto: "自动模式",
   },
   footer: {
-    copyright: "© {year} CloudPaste. 保留所有权利。",
+    copyright: "© {year} 狼的剪贴板. 保留所有权利。",
   },
   language: {
     toggle: "切换语言",
     zh: "中文",
     en: "English",
+    ja: "日本語",
   },
 };

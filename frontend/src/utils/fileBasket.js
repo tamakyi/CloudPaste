@@ -142,7 +142,7 @@ export function groupFilesByDirectory(files) {
  * @returns {string} ZIP文件名
  */
 export function generateZipFileName(options = {}) {
-  const { fileCount = 0, directoryCount = 0, prefix = "CloudPaste" } = options;
+  const { fileCount = 0, directoryCount = 0, prefix = "狼的剪贴板" } = options;
 
   const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
 
