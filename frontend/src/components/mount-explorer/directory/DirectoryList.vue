@@ -222,6 +222,21 @@
           </div>
         </div>
       </div>
+
+      <!-- 图廊视图 -->
+      <GalleryView
+        v-else-if="viewMode === 'gallery'"
+        :items="sortedItems"
+        :dark-mode="darkMode"
+        :is-checkbox-mode="isCheckboxMode"
+        :selected-items="selectedItems"
+        @item-click="handleItemClick"
+        @item-select="handleItemSelect"
+        @download="handleDownload"
+        @getLink="handleGetLink"
+        @rename="handleRename"
+        @delete="handleDelete"
+      />
     </div>
 
     <!-- 重命名对话框 -->
@@ -285,6 +300,7 @@
 import { ref, computed, nextTick, onMounted } from "vue";
 import { useI18n } from "vue-i18n";
 import FileItem from "./FileItem.vue";
+import GalleryView from "./GalleryView.vue";
 import { getFileIcon } from "../../../utils/fileTypeIcons";
 import { useDirectorySort, useFileOperations } from "../../../composables/index.js";
 
@@ -314,7 +330,7 @@ const props = defineProps({
   },
   viewMode: {
     type: String,
-    default: "list", // 'list' 或 'grid'
+    default: "list", // 'list' | 'grid' | 'gallery'
   },
   isCheckboxMode: {
     type: Boolean,
@@ -330,7 +346,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(["navigate", "download", "rename", "delete", "preview", "item-select", "toggle-select-all", "show-message"]);
+const emit = defineEmits(["navigate", "download", "getLink", "rename", "delete", "preview", "item-select", "toggle-select-all", "show-message"]);
 
 // 使用新的排序逻辑
 const sortedItems = createSortedItems(computed(() => props.items));

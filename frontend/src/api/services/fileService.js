@@ -168,23 +168,33 @@ export async function directUploadFile(file, options, onProgress, onXhrReady, on
     const uploadResult = await new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
 
+      // 添加清理函数防止内存泄漏
+      const cleanup = () => {
+        if (xhr.upload) {
+          xhr.upload.removeEventListener("progress", progressHandler);
+        }
+        xhr.removeEventListener("load", loadHandler);
+        xhr.removeEventListener("error", errorHandler);
+        xhr.removeEventListener("abort", abortHandler);
+      };
+
       // 传递XHR实例给父组件，以支持取消上传
       if (typeof onXhrReady === "function") {
         onXhrReady(xhr);
       }
 
-      // 设置进度监听
-      xhr.upload.addEventListener("progress", (event) => {
+      // 定义事件处理器，便于清理
+      const progressHandler = (event) => {
         if (event.lengthComputable) {
           const progress = Math.round((event.loaded / event.total) * 100);
           if (typeof onProgress === "function") {
             onProgress(progress, event.loaded, event.total);
           }
         }
-      });
+      };
 
-      // 设置完成监听
-      xhr.addEventListener("load", () => {
+      const loadHandler = () => {
+        cleanup();
         if (xhr.status >= 200 && xhr.status < 300) {
           // 获取ETag (S3返回的文件标识符)
           const etag = xhr.getResponseHeader("ETag");
@@ -197,16 +207,24 @@ export async function directUploadFile(file, options, onProgress, onXhrReady, on
           console.error("上传失败，状态码:", xhr.status, "响应:", xhr.responseText);
           reject(new Error(`上传失败: ${xhr.status} ${xhr.statusText}`));
         }
-      });
+      };
 
-      xhr.addEventListener("error", (e) => {
+      const errorHandler = (e) => {
+        cleanup();
         console.error("上传错误:", e);
         reject(new Error("上传过程中发生网络错误"));
-      });
+      };
 
-      xhr.addEventListener("abort", () => {
+      const abortHandler = () => {
+        cleanup();
         reject(new Error("上传被取消"));
-      });
+      };
+
+      // 设置事件监听
+      xhr.upload.addEventListener("progress", progressHandler);
+      xhr.addEventListener("load", loadHandler);
+      xhr.addEventListener("error", errorHandler);
+      xhr.addEventListener("abort", abortHandler);
 
       // 配置请求
       xhr.open("PUT", upload_url, true);
@@ -265,14 +283,14 @@ export async function directUploadFile(file, options, onProgress, onXhrReady, on
         const { useAuthStore } = await import("../../stores/authStore.js");
         const authStore = useAuthStore();
 
-        // 根据用户身份选择合适的删除API
+        // 根据用户身份选择合适的批量删除API
         if (authStore.isAdmin) {
-          // 使用管理员API删除文件
-          await deleteAdminFile(fileId);
+          // 使用管理员批量删除API删除文件
+          await batchDeleteAdminFiles([fileId]);
           console.log("已成功删除上传失败的文件记录（管理员API）");
         } else if (authStore.authType === "apikey" && authStore.apiKey) {
-          // 使用用户API删除文件
-          await deleteUserFile(fileId);
+          // 使用用户批量删除API删除文件
+          await batchDeleteUserFiles([fileId]);
           console.log("已成功删除上传失败的文件记录（用户API）");
         } else {
           console.warn("未检测到有效的管理员令牌或API密钥，无法删除文件记录");
@@ -298,7 +316,7 @@ export async function directUploadFile(file, options, onProgress, onXhrReady, on
  * @returns {Promise<Object>} 文件列表响应
  */
 export async function getAdminFiles(limit = 50, offset = 0) {
-  return await get(`admin/files?limit=${limit}&offset=${offset}`);
+  return await get("admin/files", { params: { limit, offset } });
 }
 
 /**
@@ -321,12 +339,12 @@ export async function updateAdminFile(id, metadata) {
 }
 
 /**
- * 删除管理员文件
- * @param {string} id - 文件ID
- * @returns {Promise<Object>} 删除响应
+ * 批量删除管理员文件
+ * @param {Array<string>} ids - 文件ID数组
+ * @returns {Promise<Object>} 批量删除响应
  */
-export async function deleteAdminFile(id) {
-  return await del(`admin/files/${id}`);
+export async function batchDeleteAdminFiles(ids) {
+  return await del(`admin/files/batch-delete`, { ids });
 }
 
 /******************************************************************************
@@ -340,7 +358,7 @@ export async function deleteAdminFile(id) {
  * @returns {Promise<Object>} 文件列表响应
  */
 export async function getUserFiles(limit = 50, offset = 0) {
-  return await get(`user/files?limit=${limit}&offset=${offset}`);
+  return await get("user/files", { params: { limit, offset } });
 }
 
 /**
@@ -363,12 +381,12 @@ export async function updateUserFile(id, metadata) {
 }
 
 /**
- * 删除API密钥用户的文件
- * @param {string} id - 文件ID
- * @returns {Promise<Object>} 删除响应
+ * 批量删除API密钥用户的文件
+ * @param {Array<string>} ids - 文件ID数组
+ * @returns {Promise<Object>} 批量删除响应
  */
-export async function deleteUserFile(id) {
-  return await del(`user/files/${id}`);
+export async function batchDeleteUserFiles(ids) {
+  return await del(`user/files/batch-delete`, { ids });
 }
 
 /******************************************************************************
@@ -398,4 +416,3 @@ export async function verifyFilePassword(slug, password) {
 export const getFiles = getAdminFiles;
 export const getFile = getAdminFile;
 export const updateFile = updateAdminFile;
-export const deleteFile = deleteAdminFile;

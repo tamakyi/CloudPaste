@@ -7,6 +7,86 @@ import { getFullApiUrl } from "./config";
 import { ApiStatus } from "./ApiStatus"; // 导入API状态码常量
 
 /**
+ * 获取离线操作类型
+ * @param {string} endpoint - API端点
+ * @param {string} method - HTTP方法
+ * @returns {Object|null} 操作类型信息或null（如果不支持离线）
+ */
+function getOfflineOperationType(endpoint, method) {
+  // 📝 文本分享操作 - 轻量级，适合离线队列
+  if (endpoint.includes("/paste") && method === "POST") {
+    return { type: "createPaste", description: "离线创建文本分享已加入队列" };
+  }
+
+  // 📝 管理员文本分享操作
+  if (endpoint.includes("/admin/pastes/")) {
+    if (method === "PUT") return { type: "updateAdminPaste", description: "离线更新管理员文本分享已加入队列" };
+    if (method === "DELETE") return { type: "deleteAdminPaste", description: "离线删除管理员文本分享已加入队列" };
+  }
+
+  if (endpoint.includes("/admin/pastes/batch-delete") && method === "POST") {
+    return { type: "batchDeleteAdminPastes", description: "离线批量删除管理员文本分享已加入队列" };
+  }
+
+  if (endpoint.includes("/admin/pastes/clear-expired") && method === "POST") {
+    return { type: "clearExpiredPastes", description: "离线清理过期文本分享已加入队列" };
+  }
+
+  // 📝 用户文本分享操作
+  if (endpoint.includes("/user/pastes/")) {
+    if (method === "PUT") return { type: "updateUserPaste", description: "离线更新用户文本分享已加入队列" };
+    if (method === "DELETE") return { type: "deleteUserPaste", description: "离线删除用户文本分享已加入队列" };
+  }
+
+  if (endpoint.includes("/user/pastes/batch-delete") && method === "POST") {
+    return { type: "batchDeleteUserPastes", description: "离线批量删除用户文本分享已加入队列" };
+  }
+
+  // ⚙️ 系统管理操作
+  if (endpoint.includes("/admin/system-settings") && method === "PUT") {
+    return { type: "updateSystemSettings", description: "离线系统设置更新已加入队列" };
+  }
+
+  if (endpoint.includes("/admin/cache/clear") && method === "POST") {
+    return { type: "clearCache", description: "离线缓存清理已加入队列" };
+  }
+
+  // 🔐 文件密码验证 - 轻量级操作
+  if (endpoint.includes("/public/files/") && endpoint.includes("/verify") && method === "POST") {
+    return { type: "verifyFilePassword", description: "离线文件密码验证已加入队列" };
+  }
+
+  // 不支持的操作类型
+  return null;
+}
+
+/**
+ * 检查是否为密码相关的请求
+ * @param {string} endpoint - API端点
+ * @param {Object} options - 请求选项
+ * @returns {Object} 密码请求类型检查结果
+ */
+function checkPasswordRelatedRequest(endpoint, options) {
+  // 判断是否是密码验证请求（文本或文件分享的密码验证）
+  const isTextPasswordVerify = endpoint.match(/^(\/)?paste\/[a-zA-Z0-9_-]+$/i) && options.method === "POST";
+  const isFilePasswordVerify = endpoint.match(/^(\/)?public\/files\/[a-zA-Z0-9_-]+\/verify$/i) && options.method === "POST";
+  const hasPasswordInBody = options.body && (typeof options.body === "string" ? options.body.includes("password") : options.body.password);
+
+  // 检查是否是修改密码请求
+  const isChangePasswordRequest = endpoint.includes("/admin/change-password") && options.method === "POST";
+
+  const isPasswordVerify = (isTextPasswordVerify || isFilePasswordVerify) && hasPasswordInBody;
+
+  return {
+    isPasswordVerify,
+    isChangePasswordRequest,
+    isTextPasswordVerify,
+    isFilePasswordVerify,
+    hasPasswordInBody,
+  };
+}
+
+/**
  * 添加认证令牌到请求头
  * @param {Object} headers - 原始请求头
  * @returns {Promise<Object>} 添加了令牌的请求头
@@ -56,7 +136,37 @@ async function addAuthToken(headers) {
  * @returns {Promise<any>} 请求响应数据
  */
 export async function fetchApi(endpoint, options = {}) {
-  const url = getFullApiUrl(endpoint);
+  // 规范化查询参数处理
+  let finalEndpoint = endpoint;
+  if (options.params && Object.keys(options.params).length > 0) {
+    const searchParams = new URLSearchParams();
+
+    Object.entries(options.params).forEach(([key, value]) => {
+      // 跳过undefined值（符合标准）
+      if (value === undefined) {
+        return;
+      }
+
+      // 处理数组参数（符合标准）
+      if (Array.isArray(value)) {
+        value.forEach((v) => {
+          if (v !== undefined) {
+            searchParams.append(key, String(v));
+          }
+        });
+      } else if (value !== null) {
+        // 单值参数使用set（避免重复）
+        searchParams.set(key, String(value));
+      }
+    });
+
+    const queryString = searchParams.toString();
+    if (queryString) {
+      finalEndpoint = endpoint.includes("?") ? `${endpoint}&${queryString}` : `${endpoint}?${queryString}`;
+    }
+  }
+
+  const url = getFullApiUrl(finalEndpoint);
 
   // 详细的调试日志
   const debugInfo = {
@@ -69,6 +179,15 @@ export async function fetchApi(endpoint, options = {}) {
 
   console.log(`🚀 API请求: ${debugInfo.method} ${debugInfo.url}`, debugInfo);
 
+  // 🎯 PWA网络状态检测 - 符合最佳实践
+  if (!navigator.onLine) {
+    console.warn(`🔌 离线状态，API请求可能失败: ${url}`);
+    // Service Worker Cache API会处理HTTP缓存，这里处理离线操作队列
+    if (options.method && options.method !== "GET") {
+      await handleOfflineOperation(endpoint, options);
+    }
+  }
+
   // 检查请求体是否为FormData类型
   const isFormData = options.body instanceof FormData;
 
@@ -78,7 +197,6 @@ export async function fetchApi(endpoint, options = {}) {
       // 如果是FormData，不设置默认的Content-Type，让浏览器自动处理
       ...(isFormData ? {} : { "Content-Type": "application/json" }),
     },
-    // 不再使用credentials: 'include'，因为我们使用Bearer token认证
   };
 
   // 合并默认选项和用户传入的选项，并添加认证令牌
@@ -98,7 +216,28 @@ export async function fetchApi(endpoint, options = {}) {
 
   try {
     const startTime = Date.now();
-    const response = await fetch(url, requestOptions);
+
+    // 添加默认超时处理（30秒）
+    const timeoutMs = requestOptions.timeout || 30000;
+    let signal = requestOptions.signal;
+
+    // 如果没有提供signal，使用AbortSignal.timeout()（现代浏览器）
+    if (!signal) {
+      if (typeof AbortSignal.timeout === "function") {
+        // 使用官方推荐的AbortSignal.timeout()
+        signal = AbortSignal.timeout(timeoutMs);
+      } else {
+        // 降级到传统方式（兼容旧浏览器）
+        const controller = new AbortController();
+        signal = controller.signal;
+        setTimeout(() => controller.abort(), timeoutMs);
+      }
+    }
+
+    const response = await fetch(url, {
+      ...requestOptions,
+      signal,
+    });
     const endTime = Date.now();
     const timeTaken = endTime - startTime;
 
@@ -126,15 +265,9 @@ export async function fetchApi(endpoint, options = {}) {
       if (response.status === ApiStatus.UNAUTHORIZED) {
         console.error(`🚫 授权失败(${url}):`, responseData);
 
-        // 判断是否是密码验证请求（文本或文件分享的密码验证）
-        const isTextPasswordVerify = endpoint.match(/^(\/)?paste\/[a-zA-Z0-9_-]+$/i) && options.method === "POST";
-        const isFilePasswordVerify = endpoint.match(/^(\/)?public\/files\/[a-zA-Z0-9_-]+\/verify$/i) && options.method === "POST";
-        const hasPasswordInBody = options.body && (typeof options.body === "string" ? options.body.includes("password") : options.body.password);
-
-        // 检查是否是修改密码请求
-        const isChangePasswordRequest = endpoint.includes("/admin/change-password") && options.method === "POST";
-
-        const isPasswordVerify = (isTextPasswordVerify || isFilePasswordVerify) && hasPasswordInBody;
+        // 检查特殊的密码验证请求类型
+        const isPasswordRelatedRequest = checkPasswordRelatedRequest(endpoint, options);
+        const { isPasswordVerify, isChangePasswordRequest } = isPasswordRelatedRequest;
 
         // 如果是密码验证请求，直接返回错误，不清除令牌
         if (isPasswordVerify) {
@@ -233,11 +366,133 @@ export async function fetchApi(endpoint, options = {}) {
       return responseData;
     }
 
+    // 成功响应后存储重要业务数据到IndexedDB
+    await handleSuccessfulResponse(endpoint, options, responseData);
+
     // 如果响应不符合统一格式，则直接返回
     return responseData;
   } catch (error) {
-    console.error(`❌ API请求失败(${url}):`, error);
-    throw error;
+    // 处理不同类型的错误
+    if (error.name === "AbortError") {
+      console.warn(`⏹️ API请求被取消(${url}):`, error.message);
+      throw new Error("请求被取消或超时");
+    } else if (error.name === "TimeoutError") {
+      console.error(`⏰ API请求超时(${url}):`, error.message);
+      throw new Error("请求超时，服务器响应时间过长");
+    } else if (error.name === "TypeError" && error.message.includes("fetch")) {
+      console.error(`🌐 网络错误(${url}):`, error.message);
+      throw new Error("网络连接失败，请检查网络设置");
+    } else {
+      console.error(`❌ API请求失败(${url}):`, error);
+      throw error;
+    }
+  }
+}
+
+// 离线操作锁
+let offlineOperationLock = false;
+
+// 处理离线操作（PWA
+async function handleOfflineOperation(endpoint, options) {
+  if (offlineOperationLock) {
+    console.log("[PWA] 离线操作正在处理中，跳过重复操作");
+    return;
+  }
+
+  console.log(`[PWA] 处理离线操作: ${options.method} ${endpoint}`);
+  try {
+    offlineOperationLock = true;
+
+    const { pwaUtils } = await import("../pwa/pwaManager.js");
+    if (!pwaUtils || !pwaUtils.storage) {
+      console.warn("[PWA] pwaUtils或storage不可用");
+      return;
+    }
+
+    // 获取当前认证信息
+    let authToken = null;
+    let authType = null;
+
+    try {
+      const { useAuthStore } = await import("../stores/authStore.js");
+      const authStore = useAuthStore();
+
+      if (authStore.authType === "admin" && authStore.adminToken) {
+        authToken = authStore.adminToken;
+        authType = "admin";
+        console.log(`[PWA] 获取管理员认证信息，token长度: ${authToken.length}`);
+      } else if (authStore.authType === "apikey" && authStore.apiKey) {
+        authToken = authStore.apiKey;
+        authType = "apikey";
+        console.log(`[PWA] 获取API密钥认证信息，token长度: ${authToken.length}`);
+      }
+    } catch (error) {
+      console.error("[PWA] 获取认证信息失败:", error);
+    }
+
+    const operation = {
+      endpoint,
+      method: options.method,
+      data: options.body,
+      authToken, // 保存认证token
+      authType, // 保存认证类型
+      timestamp: new Date().toISOString(),
+      status: "pending",
+    };
+
+    // 根据端点和方法确定操作类型
+    const operationType = getOfflineOperationType(endpoint, options.method);
+    if (!operationType) {
+      console.log(`[PWA] 跳过离线操作（不适合离线处理）: ${options.method} ${endpoint}`);
+      return;
+    }
+
+    operation.type = operationType.type;
+    await pwaUtils.storage.addToOfflineQueue(operation);
+    console.log(`[PWA] ${operationType.description}`);
+
+    // 🎯 尝试注册Background Sync以确保可靠同步
+    if (pwaUtils.isBackgroundSyncSupported()) {
+      try {
+        await pwaUtils.registerBackgroundSync("sync-offline-queue");
+        console.log("[PWA] Background Sync 已注册，操作将在网络恢复时自动同步");
+      } catch (error) {
+        console.warn("[PWA] Background Sync 注册失败:", error);
+      }
+    }
+  } catch (error) {
+    console.warn("[PWA] 离线操作处理失败:", error);
+  } finally {
+    // 确保锁被释放
+    offlineOperationLock = false;
+  }
+}
+
+// 处理成功响应的业务数据存储（PWA离线）
+async function handleSuccessfulResponse(endpoint, options, responseData) {
+  try {
+    const { pwaUtils } = await import("../pwa/pwaManager.js");
+    if (!pwaUtils || !pwaUtils.storage) return;
+
+    const method = options.method || "GET";
+
+    // 只存储用户创建的重要业务数据，不存储所有API响应
+    if (method === "POST" && endpoint.includes("/paste") && responseData.data) {
+      // 存储新创建的文本分享
+      await pwaUtils.storage.savePaste(responseData.data);
+      console.log(`[PWA] 已存储文本分享: ${responseData.data.slug}`);
+    } else if (method === "POST" && endpoint.includes("/upload") && responseData.data) {
+      // 存储上传的文件信息
+      await pwaUtils.storage.saveFile(responseData.data);
+      console.log(`[PWA] 已存储文件信息: ${responseData.data.filename || responseData.data.slug}`);
+    } else if (method === "POST" && endpoint.includes("/admin/settings")) {
+      // 存储重要设置更新
+      const settingKey = `admin_setting_${Date.now()}`;
+      await pwaUtils.storage.saveSetting(settingKey, responseData);
+      console.log(`[PWA] 已存储管理员设置: ${settingKey}`);
+    }
+  } catch (error) {
+    console.warn("[PWA] 业务数据存储失败:", error);
   }
 }
 
@@ -257,14 +512,17 @@ export function get(endpoint, options = {}) {
  */
 export async function post(endpoint, data, options = {}) {
   try {
-    const url = getFullApiUrl(endpoint);
-    const headers = {
-      ...(await addAuthToken({})),
-      ...options.headers,
-    };
-
     // 检查是否需要发送原始二进制数据（用于分片上传）
     if (options.rawBody && (data instanceof ArrayBuffer || data instanceof Blob)) {
+      const url = getFullApiUrl(endpoint);
+
+      // 获取认证头
+      const authHeaders = await addAuthToken({});
+      const headers = {
+        ...authHeaders,
+        ...options.headers,
+      };
+
       // 提取分片信息（如果存在）
       let partInfo = "";
       const partNumberMatch = endpoint.match(/partNumber=(\d+)/);
@@ -368,6 +626,9 @@ export async function post(endpoint, data, options = {}) {
           reject(new Error("网络错误，请检查连接"));
         };
 
+        // 超时时间
+        xhr.timeout = options.timeout || 300000; // 默认5分钟超时
+
         // 监听超时
         xhr.ontimeout = function () {
           console.error(`❌ 请求超时: ${url}${partInfo}`);
@@ -386,15 +647,9 @@ export async function post(endpoint, data, options = {}) {
     }
 
     // 常规JSON数据或FormData
-    if (!headers["Content-Type"] && !(data instanceof FormData)) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    // 使用封装的fetchApi处理请求
     return await fetchApi(endpoint, {
       ...options,
       method: "POST",
-      headers,
       body: data,
     });
   } catch (error) {
@@ -415,36 +670,4 @@ export function put(endpoint, data, options = {}) {
  */
 export function del(endpoint, data, options = {}) {
   return fetchApi(endpoint, { ...options, method: "DELETE", body: data });
-}
-
-/**
- * 请求拦截器 - 目前为简化版，可扩展为更复杂的实现
- */
-export function setupInterceptors(handlers = {}) {
-  // 在这里可以实现全局请求/响应拦截器
-  // 例如：添加认证令牌、刷新令牌逻辑等
-
-  const { onRequest, onResponse, onError } = handlers;
-
-  // 这里提供一个简单的拦截器框架，可根据需要扩展
-  return {
-    request: (config) => {
-      if (onRequest) {
-        return onRequest(config);
-      }
-      return config;
-    },
-    response: (response) => {
-      if (onResponse) {
-        return onResponse(response);
-      }
-      return response;
-    },
-    error: (error) => {
-      if (onError) {
-        return onError(error);
-      }
-      throw error;
-    },
-  };
 }

@@ -130,8 +130,8 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, computed, ref } from "vue";
-import { getFullApiUrl } from "../../../api/config.js";
+import { defineProps, defineEmits, computed } from "vue";
+import { api } from "../../../api/index.js";
 import { isOffice as isOfficeFileType } from "../../../utils/mimeUtils.js";
 
 const props = defineProps({
@@ -202,35 +202,16 @@ const getOfficePreviewUrl = async () => {
   if (!props.file.slug) return null;
 
   try {
-    // 构建API请求URL
-    let apiUrl = getFullApiUrl(`office-preview/${props.file.slug}`);
-
     // 获取文件密码
     const filePassword = getFilePassword();
 
-    // 添加密码参数(如果需要)
-    if (props.file.has_password && filePassword) {
-      apiUrl += `?password=${encodeURIComponent(filePassword)}`;
-    }
+    console.log("正在请求Office预览URL:", props.file.slug);
 
-    console.log("正在请求Office预览URL:", apiUrl);
-
-    // 发送请求获取直接URL
-    const response = await fetch(apiUrl);
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || "获取Office预览URL失败");
-    }
-
-    // 解析响应
-    const data = await response.json();
-    if (!data.url) {
-      throw new Error("无法获取Office预览URL");
-    }
-
-    // 生成Microsoft Office在线预览URL
-    const encodedUrl = encodeURIComponent(data.url);
-    return `https://view.officeapps.live.com/op/view.aspx?src=${encodedUrl}`;
+    // 使用统一的预览服务
+    return await api.preview.getOfficePreviewUrl(props.file.slug, {
+      password: filePassword,
+      provider: "microsoft",
+    });
   } catch (error) {
     console.error("获取Office预览URL出错:", error);
     alert(`预览失败: ${error.message}`);

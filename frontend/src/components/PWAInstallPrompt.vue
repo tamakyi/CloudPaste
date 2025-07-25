@@ -1,6 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue";
-import { pwaState, pwaUtils } from "../pwa/pwaManager.js";
+import { useI18n } from "vue-i18n";
+import { pwaUtils } from "@/pwa/pwaManager.js";
+
+// 🎯 国际化支持
+const { t } = useI18n();
 
 const props = defineProps({
   darkMode: {
@@ -16,6 +20,7 @@ const isInstalling = ref(false);
 const isUpdating = ref(false);
 
 // 计算属性
+const pwaState = pwaUtils.state;
 const canInstall = computed(() => pwaState.isInstallable && !pwaState.isInstalled);
 const hasUpdate = computed(() => pwaState.isUpdateAvailable);
 const isOffline = computed(() => pwaState.isOffline);
@@ -31,7 +36,7 @@ const installApp = async () => {
       showInstallPrompt.value = false;
     }
   } catch (error) {
-    console.error("安装失败:", error);
+    console.error(t("pwa.errors.installFailed"), error);
   } finally {
     isInstalling.value = false;
   }
@@ -43,10 +48,16 @@ const updateApp = async () => {
 
   isUpdating.value = true;
   try {
-    await pwaUtils.update();
-    showUpdatePrompt.value = false;
+    const success = await pwaUtils.update();
+    if (success) {
+      showUpdatePrompt.value = false;
+      // 等待一下然后刷新页面
+      setTimeout(() => {
+        pwaUtils.reloadApp();
+      }, 1000);
+    }
   } catch (error) {
-    console.error("更新失败:", error);
+    console.error(t("pwa.errors.updateFailed"), error);
   } finally {
     isUpdating.value = false;
   }
@@ -123,7 +134,7 @@ onUnmounted(() => {
               d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
             />
           </svg>
-          <span class="whitespace-nowrap">离线模式</span>
+          <span class="whitespace-nowrap">{{ t("pwa.status.offline") }}</span>
         </div>
       </div>
     </Transition>
@@ -144,8 +155,8 @@ onUnmounted(() => {
             </svg>
           </div>
           <div class="flex-1 min-w-0">
-            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">安装 狼的剪贴板</h3>
-            <p :class="['text-sm mt-1', darkMode ? 'text-gray-300' : 'text-gray-600']">安装到您的设备以获得更好的体验</p>
+            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">{{ t("pwa.installPrompt.title") }}</h3>
+            <p :class="['text-sm mt-1', darkMode ? 'text-gray-300' : 'text-gray-600']">{{ t("pwa.installPrompt.message") }}</p>
             <div class="flex space-x-2 mt-3">
               <button
                 @click="installApp"
@@ -155,7 +166,7 @@ onUnmounted(() => {
                   darkMode ? 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-800' : 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-400',
                 ]"
               >
-                <span v-if="!isInstalling">安装</span>
+                <span v-if="!isInstalling">{{ t("pwa.actions.install") }}</span>
                 <span v-else class="flex items-center space-x-1">
                   <svg class="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -165,7 +176,7 @@ onUnmounted(() => {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  <span>安装中...</span>
+                  <span>{{ t("pwa.install.installing") }}</span>
                 </span>
               </button>
               <button
@@ -175,7 +186,7 @@ onUnmounted(() => {
                   darkMode ? 'text-gray-300 hover:text-white hover:bg-gray-700' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100',
                 ]"
               >
-                稍后
+                {{ t("pwa.actions.later") }}
               </button>
             </div>
           </div>
@@ -212,8 +223,8 @@ onUnmounted(() => {
             </svg>
           </div>
           <div class="flex-1 min-w-0">
-            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">应用更新可用</h3>
-            <p :class="['text-sm mt-1', darkMode ? 'text-gray-300' : 'text-gray-600']">新版本已准备就绪，立即更新以获得最新功能</p>
+            <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">{{ t("pwa.updatePrompt.title") }}</h3>
+            <p :class="['text-sm mt-1', darkMode ? 'text-gray-300' : 'text-gray-600']">{{ t("pwa.updatePrompt.message") }}</p>
             <div class="flex space-x-2 mt-3">
               <button
                 @click="updateApp"
@@ -223,7 +234,7 @@ onUnmounted(() => {
                   darkMode ? 'bg-green-600 hover:bg-green-700 text-white disabled:bg-green-800' : 'bg-green-600 hover:bg-green-700 text-white disabled:bg-green-400',
                 ]"
               >
-                <span v-if="!isUpdating">立即更新</span>
+                <span v-if="!isUpdating">{{ t("pwa.update.updateApp") }}</span>
                 <span v-else class="flex items-center space-x-1">
                   <svg class="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -233,7 +244,7 @@ onUnmounted(() => {
                       d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
                     ></path>
                   </svg>
-                  <span>更新中...</span>
+                  <span>{{ t("pwa.update.updating") }}</span>
                 </span>
               </button>
               <button
@@ -243,7 +254,7 @@ onUnmounted(() => {
                   darkMode ? 'text-gray-300 hover:text-white hover:bg-gray-700' : 'text-gray-600 hover:text-gray-800 hover:bg-gray-100',
                 ]"
               >
-                稍后
+                {{ t("pwa.actions.later") }}
               </button>
             </div>
           </div>

@@ -375,8 +375,8 @@
         </div>
         <div class="flex flex-col items-center">
           <div class="bg-white p-3 rounded-md shadow-md mb-3">
-            <img v-if="qrCodeUrl" :src="qrCodeUrl" :alt="t('file.fileQrCode')" class="w-48 h-48" />
-            <div v-else class="w-48 h-48 flex items-center justify-center">
+            <img v-if="qrCodeUrl" :src="qrCodeUrl" :alt="t('file.fileQrCode')" class="w-60 h-60" />
+            <div v-else class="w-60 h-60 flex items-center justify-center">
               <svg class="animate-spin h-8 w-8" :class="darkMode ? 'text-gray-400' : 'text-gray-600'" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path
@@ -439,6 +439,7 @@ const emit = defineEmits(["refresh"]);
 // 导入统一的工具函数
 import { getRemainingViews as getRemainingViewsUtil, formatFileSize } from "../../utils/fileUtils.js";
 import { getFileIconClass as getFileIconClassUtil } from "../../utils/mimeUtils.js";
+import QRCode from "qrcode";
 
 /**
  * 计算剩余可访问次数
@@ -489,15 +490,28 @@ const deleteFile = async () => {
   isDeleting.value = true;
 
   try {
-    // 根据用户类型调用不同的API
+    let response;
+
+    // 根据用户类型调用不同的批量删除API
     if (isAdmin()) {
-      await api.file.deleteFile(fileIdToDelete.value);
+      response = await api.file.batchDeleteFiles([fileIdToDelete.value]);
     } else {
-      await api.file.deleteUserFile(fileIdToDelete.value);
+      response = await api.file.batchDeleteUserFiles([fileIdToDelete.value]);
     }
 
-    // 显示成功消息
-    showMessage("success", t("file.deletedSuccess"));
+    // 检查批量删除结果
+    if (response.success) {
+      if (response.data && response.data.failed && response.data.failed.length > 0) {
+        // 删除失败
+        const failedItem = response.data.failed[0];
+        throw new Error(failedItem.error || "删除失败");
+      }
+
+      // 显示成功消息
+      showMessage("success", t("file.deletedSuccess"));
+    } else {
+      throw new Error(response.message || "删除失败");
+    }
 
     // 关闭对话框
     showDeleteConfirm.value = false;
@@ -614,11 +628,21 @@ const closeQRCode = () => {
 };
 
 // 生成二维码
-const generateQRCode = (url) => {
-  // 使用QR Code API生成二维码
-  // 这里使用QRServer.com的免费API
-  const apiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`;
-  qrCodeUrl.value = apiUrl;
+const generateQRCode = async (url) => {
+  try {
+    // 使用qrcode库生成二维码
+    const dataURL = await QRCode.toDataURL(url, {
+      width: 300,
+      margin: 2,
+      color: {
+        dark: props.darkMode ? "#ffffff" : "#000000",
+        light: props.darkMode ? "#000000" : "#ffffff",
+      },
+    });
+    qrCodeUrl.value = dataURL;
+  } catch (error) {
+    console.error("生成二维码失败:", error);
+  }
 };
 
 // 下载二维码
@@ -628,7 +652,7 @@ const downloadQRCode = () => {
   // 创建一个链接元素
   const a = document.createElement("a");
   a.href = qrCodeUrl.value;
-  a.download = `qrcode-${Date.now()}.png`;
+  a.download = `cloudpaste-file-qrcode-${Date.now()}.png`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
