@@ -63,7 +63,7 @@ export default {
     auto: "Auto mode",
   },
   footer: {
-    copyright: "© {year} CloudPaste. All rights reserved.",
+    copyright: "© {year} TamaPaste. All rights reserved.",
   },
   language: {
     toggle: "Toggle language",
