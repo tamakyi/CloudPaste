@@ -8,6 +8,7 @@ import { StorageFactory } from "../factory/StorageFactory.js";
 import { HTTPException } from "hono/http-exception";
 import { ApiStatus } from "../../constants/index.js";
 import { findMountPointByPath } from "../fs/utils/MountResolver.js";
+import { StorageConfigUtils } from "../utils/StorageConfigUtils.js";
 
 export class MountManager {
   /**
@@ -47,6 +48,11 @@ export class MountManager {
     }
 
     const { mount, subPath } = mountResult;
+
+    // 对API密钥用户验证挂载点S3配置权限
+    if (userType === "apiKey") {
+      await this._validateMountPermissionForApiKey(mount, userIdOrInfo);
+    }
 
     // 获取存储驱动
     const driver = await this.getDriver(mount);
@@ -118,35 +124,46 @@ export class MountManager {
    * @returns {Promise<Object>} 存储配置
    */
   async _getStorageConfig(mount) {
-    switch (mount.storage_type) {
-      case "S3":
-        return await this._getS3Config(mount.storage_config_id);
-
-      // 未来扩展其他存储类型
-      // case "WebDAV":
-      //   return await this._getWebDAVConfig(mount.storage_config_id);
-
-      default:
-        throw new HTTPException(ApiStatus.BAD_REQUEST, {
-          message: `不支持的存储类型: ${mount.storage_type}`,
-        });
-    }
+    return await StorageConfigUtils.getStorageConfig(this.db, mount.storage_type, mount.storage_config_id);
   }
 
   /**
-   * 获取S3配置
+   * 验证API密钥用户的挂载点权限
+   * 检查挂载点的S3配置是否允许API密钥用户访问
    * @private
-   * @param {string} configId - 配置ID
-   * @returns {Promise<Object>} S3配置
+   * @param {Object} mount - 挂载点对象
+   * @param {Object} userIdOrInfo - API密钥用户信息
+   * @throws {HTTPException} 当权限不足时抛出异常
    */
-  async _getS3Config(configId) {
-    const config = await this.db.prepare("SELECT * FROM s3_configs WHERE id = ?").bind(configId).first();
+  async _validateMountPermissionForApiKey(mount, userIdOrInfo) {
+    try {
+      // 获取可访问的挂载点列表（已包含S3配置权限过滤）
+      const { authGateway } = await import("../../middlewares/authGatewayMiddleware.js");
+      const accessibleMounts = await authGateway.utils.getAccessibleMounts(this.db, userIdOrInfo, "apiKey");
 
-    if (!config) {
-      throw new HTTPException(ApiStatus.NOT_FOUND, { message: "S3配置不存在" });
+      // 验证目标挂载点是否在可访问列表中
+      const isAccessible = accessibleMounts.some((accessibleMount) => accessibleMount.id === mount.id);
+
+      if (!isAccessible) {
+        console.log(`MountManager权限检查失败: API密钥用户无权限访问挂载点 ${mount.name}`);
+        throw new HTTPException(403, {
+          message: `API密钥用户无权限访问挂载点: ${mount.name}`,
+        });
+      }
+
+      console.log(`MountManager权限检查通过: API密钥用户可访问挂载点 ${mount.name}`);
+    } catch (error) {
+      // 如果是HTTPException，直接重新抛出
+      if (error instanceof HTTPException) {
+        throw error;
+      }
+
+      // 其他错误转换为内部服务器错误
+      console.error("MountManager权限检查过程发生错误:", error);
+      throw new HTTPException(500, {
+        message: "权限检查过程发生错误",
+      });
     }
-
-    return config;
   }
 
   /**

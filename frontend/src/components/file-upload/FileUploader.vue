@@ -493,7 +493,7 @@
 
 <script setup>
 import { ref, reactive, defineProps, defineEmits, getCurrentInstance, onMounted, onUnmounted, watch } from "vue";
-import { api } from "../../api";
+import { api } from "@/api";
 import { API_BASE_URL } from "../../api/config"; // 导入API_BASE_URL
 import { useI18n } from "vue-i18n"; // 导入i18n
 import UrlUploader from "./UrlUploader.vue"; // 导入URL上传组件
@@ -802,7 +802,7 @@ const formatMaxFileSize = () => {
 };
 
 // 导入统一的工具函数
-import { formatFileSize } from "../../utils/fileUtils.js";
+import { formatFileSize } from "@/utils/fileUtils.js";
 
 // 取消上传
 const cancelUpload = () => {
@@ -824,11 +824,9 @@ const cancelUpload = () => {
 
         // 如果已获取了文件ID，则删除相应的文件记录
         if (fileItem.fileId) {
-          // 根据用户身份选择合适的批量删除API
-          const deleteApi = props.isAdmin ? api.file.batchDeleteFiles : api.file.batchDeleteUserFiles;
-
-          // 删除文件记录
-          deleteApi([fileItem.fileId])
+          // 使用统一的批量删除API
+          api.file
+            .batchDeleteFiles([fileItem.fileId])
             .then(() => {
               console.log("已成功删除被取消的文件记录", fileItem.fileId);
             })
@@ -1412,11 +1410,9 @@ const cancelSingleUpload = (index) => {
 
   // 如果已获取了文件ID，则删除相应的文件记录
   if (fileItem.fileId) {
-    // 根据用户身份选择合适的批量删除API
-    const deleteApi = props.isAdmin ? api.file.batchDeleteFiles : api.file.batchDeleteUserFiles;
-
-    // 删除文件记录
-    deleteApi([fileItem.fileId])
+    // 使用统一的批量删除API
+    api.file
+      .batchDeleteFiles([fileItem.fileId])
       .then(() => {
         console.log("已成功删除被取消的文件记录", fileItem.fileId);
       })

@@ -110,11 +110,11 @@
 
 <script setup>
 import { ref, onMounted, computed, onBeforeUnmount } from "vue";
-import { api } from "../api";
+import { api } from "@/api";
 import FileUploader from "../components/file-upload/FileUploader.vue";
 import FileList from "../components/file-upload/FileList.vue";
 import { useI18n } from "vue-i18n"; // 导入i18n
-import { useAuthStore } from "../stores/authStore.js";
+import { useAuthStore } from "@/stores/authStore.js";
 
 const { t } = useI18n(); // 初始化i18n
 
@@ -203,8 +203,8 @@ const loadFiles = async () => {
 
   loadingFiles.value = true;
   try {
-    // 根据用户类型调用不同的API
-    const response = isAdmin.value ? await api.file.getFiles() : await api.file.getUserFiles();
+    // 使用统一的API
+    const response = await api.file.getFiles();
 
     if (response.success && response.data) {
       // 确保按时间倒序排序，最新的在前面

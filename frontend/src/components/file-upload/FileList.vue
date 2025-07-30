@@ -408,12 +408,16 @@
 
 <script setup>
 import { ref, defineProps, defineEmits, watch, onUnmounted } from "vue";
-import { api } from "../../api";
+import { api } from "@/api";
 import { useI18n } from "vue-i18n";
-import { formatMimeType as formatMimeTypeUtil } from "../../utils/mimeUtils";
+import { formatMimeType as formatMimeTypeUtil } from "@/utils/mimeUtils";
 import { copyToClipboard } from "@/utils/clipboard";
+import { useDeleteSettingsStore } from "@/stores/deleteSettingsStore.js";
 
 const { t } = useI18n();
+
+// 使用全局删除设置
+const deleteSettingsStore = useDeleteSettingsStore();
 
 const props = defineProps({
   darkMode: {
@@ -437,8 +441,8 @@ const props = defineProps({
 const emit = defineEmits(["refresh"]);
 
 // 导入统一的工具函数
-import { getRemainingViews as getRemainingViewsUtil, formatFileSize } from "../../utils/fileUtils.js";
-import { getFileIconClass as getFileIconClassUtil } from "../../utils/mimeUtils.js";
+import { getRemainingViews as getRemainingViewsUtil, formatFileSize } from "@/utils/fileUtils.js";
+import { getFileIconClass as getFileIconClassUtil } from "@/utils/mimeUtils.js";
 import QRCode from "qrcode";
 
 /**
@@ -492,12 +496,8 @@ const deleteFile = async () => {
   try {
     let response;
 
-    // 根据用户类型调用不同的批量删除API
-    if (isAdmin()) {
-      response = await api.file.batchDeleteFiles([fileIdToDelete.value]);
-    } else {
-      response = await api.file.batchDeleteUserFiles([fileIdToDelete.value]);
-    }
+    // 使用统一的批量删除API，传递全局删除模式
+    response = await api.file.batchDeleteFiles([fileIdToDelete.value], deleteSettingsStore.getDeleteMode());
 
     // 检查批量删除结果
     if (response.success) {
@@ -595,7 +595,7 @@ const getFileIconClassLocal = (mimetype, filename) => {
 };
 
 // 导入统一的时间处理工具
-import { formatDateTime } from "../../utils/timeUtils.js";
+import { formatDateTime } from "@/utils/timeUtils.js";
 
 // 格式化日期
 const formatDate = (dateString) => {
@@ -682,8 +682,8 @@ const copyPermanentLink = async (file) => {
         const isAdminUser = props.userType === "admin";
         console.log(`当前用户类型: ${props.userType}, 是否管理员: ${isAdminUser}`);
 
-        // 调用相应的API
-        const response = isAdminUser ? await api.file.getFile(file.id) : await api.file.getUserFile(file.id);
+        // 调用统一的API（自动根据认证信息处理）
+        const response = await api.file.getFile(file.id);
 
         if (response.success && response.data) {
           fileWithUrls = response.data;

@@ -458,10 +458,10 @@
 <script setup>
 import { ref, reactive, defineProps, defineEmits, watch, computed } from "vue";
 import { useI18n } from "vue-i18n";
-import { api } from "../../api";
+import { api } from "@/api";
 // 导入文件类型工具
 import { getFileIcon } from "../../utils/fileTypeIcons";
-import { formatFileSize as formatFileSizeUtil, getDetailedFileType } from "../../utils/mimeUtils";
+import { formatFileSize as formatFileSizeUtil, getDetailedFileType } from "@/utils/mimeUtils";
 // 导入URL验证API（后端增强检测）
 import { validateUrlInfo } from "../../api/services/urlUploadService.js";
 
@@ -904,6 +904,9 @@ const presignedDirectUpload = async () => {
       slug: formData.slug,
       remark: formData.remark,
       path: formData.path,
+      password: formData.password,
+      expires_in: Number(formData.expires_in),
+      max_views: formData.max_views,
       metadata: {
         source_url: urlInput.value,
       },

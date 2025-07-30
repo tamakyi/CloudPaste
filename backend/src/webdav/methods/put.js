@@ -380,7 +380,7 @@ export async function handlePut(c, path, userId, userType, db) {
     }
 
     console.log(
-        `WebDAV PUT - Content-Length: ${contentLength}, Transfer-Encoding: ${transferEncoding}, 是否chunked: ${isChunked}, 声明大小: ${declaredContentLength}字节, 空文件检查: ${emptyBodyCheck}`
+      `WebDAV PUT - Content-Length: ${contentLength}, Transfer-Encoding: ${transferEncoding}, 是否chunked: ${isChunked}, 声明大小: ${declaredContentLength}字节, 空文件检查: ${emptyBodyCheck}`
     );
 
     // 从路径中提取文件名
@@ -405,8 +405,12 @@ export async function handlePut(c, path, userId, userType, db) {
     // 获取系统设置中的WebDAV上传模式
     let webdavUploadMode = "direct"; // 默认为直接上传模式
     try {
-      // 查询系统设置
-      const uploadModeSetting = await db.prepare("SELECT value FROM system_settings WHERE key = ?").bind("webdav_upload_mode").first();
+      // 使用Repository查询系统设置
+      const { RepositoryFactory } = await import("../../repositories/index.js");
+      const repositoryFactory = new RepositoryFactory(db);
+      const systemRepository = repositoryFactory.getSystemRepository();
+
+      const uploadModeSetting = await systemRepository.getSettingMetadata("webdav_upload_mode");
       if (uploadModeSetting && uploadModeSetting.value) {
         webdavUploadMode = uploadModeSetting.value;
       }
@@ -576,10 +580,10 @@ export async function handlePut(c, path, userId, userType, db) {
           const acceptable = checkSizeDifference(totalProcessed, declaredContentLength);
           if (!acceptable) {
             console.warn(
-                `WebDAV PUT - 警告：文件数据不完整，声明大小：${declaredContentLength}字节，实际上传：${totalProcessed}字节，差异：${(
-                    (declaredContentLength - totalProcessed) /
-                    (1024 * 1024)
-                ).toFixed(2)}MB`
+              `WebDAV PUT - 警告：文件数据不完整，声明大小：${declaredContentLength}字节，实际上传：${totalProcessed}字节，差异：${(
+                (declaredContentLength - totalProcessed) /
+                (1024 * 1024)
+              ).toFixed(2)}MB`
             );
           }
         }
