@@ -43,6 +43,16 @@ const proxySignStatus = ref({
   error: "",
 });
 
+// 默认代理设置
+const defaultProxySettings = ref({
+  defaultUseProxy: false,
+});
+
+// 文件命名策略设置
+const fileNamingSettings = ref({
+  enableOverwrite: true, // true = 覆盖模式（默认）, false = 随机后缀模式
+});
+
 // 移除未使用的提示框状态
 
 // 获取设置数据（使用新的分组API）
@@ -60,6 +70,10 @@ onMounted(async () => {
           proxySignSettings.value.signAll = setting.value === "true";
         } else if (setting.key === "proxy_sign_expires") {
           proxySignSettings.value.expires = parseInt(setting.value) || 0;
+        } else if (setting.key === "default_use_proxy") {
+          defaultProxySettings.value.defaultUseProxy = setting.value === "true";
+        } else if (setting.key === "file_naming_strategy") {
+          fileNamingSettings.value.enableOverwrite = setting.value === "overwrite";
         }
       });
     } else {
@@ -107,6 +121,8 @@ const handleUpdateUploadSettings = async (event) => {
       1,
       {
         max_upload_size: Math.round(convertedSize),
+        default_use_proxy: defaultProxySettings.value.defaultUseProxy.toString(),
+        file_naming_strategy: fileNamingSettings.value.enableOverwrite ? "overwrite" : "random_suffix",
       },
       true
     );
@@ -243,6 +259,42 @@ const handleUpdateProxySignSettings = async (event) => {
                       {{ unit }}
                     </option>
                   </select>
+                </div>
+
+                <!-- 默认代理设置 -->
+                <div class="setting-item mt-6">
+                  <div class="flex items-start justify-between">
+                    <div class="flex-1">
+                      <label class="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-2"> {{ t("admin.global.uploadSettings.defaultUseProxyLabel") }} </label>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("admin.global.uploadSettings.defaultUseProxyHint") }}</p>
+                    </div>
+                    <div class="flex-shrink-0 ml-4">
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="defaultUseProxy" v-model="defaultProxySettings.defaultUseProxy" class="sr-only peer" />
+                        <div
+                          class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"
+                        ></div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 文件命名策略设置 -->
+                <div class="setting-item">
+                  <div class="flex items-center justify-between">
+                    <div class="flex-1">
+                      <label class="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">{{ t("admin.global.uploadSettings.fileOverwriteModeLabel") }}</label>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ t("admin.global.uploadSettings.fileOverwriteModeHint") }}</p>
+                    </div>
+                    <div class="flex-shrink-0 ml-4">
+                      <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="enableOverwrite" v-model="fileNamingSettings.enableOverwrite" class="sr-only peer" />
+                        <div
+                          class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"
+                        ></div>
+                      </label>
+                    </div>
+                  </div>
                 </div>
 
                 <div class="flex justify-start">

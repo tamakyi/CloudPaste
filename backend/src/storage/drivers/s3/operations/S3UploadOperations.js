@@ -6,7 +6,7 @@
 import { HTTPException } from "hono/http-exception";
 import { ApiStatus } from "../../../../constants/index.js";
 import { generatePresignedPutUrl, buildS3Url } from "../../../../utils/s3Utils.js";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, ListMultipartUploadsCommand, ListPartsCommand, UploadPartCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { updateMountLastUsed } from "../../../fs/utils/MountResolver.js";
 import { getMimeTypeFromFilename } from "../../../../utils/fileUtils.js";
@@ -343,8 +343,20 @@ export class S3UploadOperations {
           finalS3Path = s3SubPath + fileName;
         }
 
-        // 确保parts按照partNumber排序
-        const sortedParts = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+        // 验证parts格式 
+        const validatedParts = parts.map((part) => {
+          if (!part.PartNumber || !part.ETag) {
+            throw new Error(`分片数据不完整: PartNumber=${part.PartNumber}, ETag=${part.ETag}`);
+          }
+
+          return {
+            PartNumber: part.PartNumber,
+            ETag: part.ETag,
+          };
+        });
+
+        // 确保parts按照PartNumber排序
+        const sortedParts = [...validatedParts].sort((a, b) => a.PartNumber - b.PartNumber);
 
         // 完成分片上传
         const { CompleteMultipartUploadCommand } = await import("@aws-sdk/client-s3");
@@ -353,10 +365,7 @@ export class S3UploadOperations {
           Key: finalS3Path,
           UploadId: uploadId,
           MultipartUpload: {
-            Parts: sortedParts.map((part) => ({
-              PartNumber: part.partNumber,
-              ETag: part.etag,
-            })),
+            Parts: sortedParts,
           },
         });
 
@@ -440,6 +449,149 @@ export class S3UploadOperations {
       },
       "中止前端分片上传",
       "中止前端分片上传失败"
+    );
+  }
+
+  /**
+   * 列出进行中的分片上传
+   * @param {string} s3SubPath - S3子路径（可选，用于过滤特定文件的上传）
+   * @param {Object} options - 选项参数
+   * @returns {Promise<Object>} 进行中的上传列表
+   */
+  async listMultipartUploads(s3SubPath = "", options = {}) {
+    const { maxUploads = 1000, keyMarker, uploadIdMarker } = options;
+
+    return handleFsError(
+      async () => {
+        const listCommand = new ListMultipartUploadsCommand({
+          Bucket: this.config.bucket_name,
+          Prefix: s3SubPath,
+          MaxUploads: maxUploads,
+          KeyMarker: keyMarker,
+          UploadIdMarker: uploadIdMarker,
+        });
+
+        const response = await this.s3Client.send(listCommand);
+
+        // 格式化响应数据
+        const uploads = (response.Uploads || []).map((upload) => ({
+          key: upload.Key,
+          uploadId: upload.UploadId,
+          initiated: upload.Initiated,
+          storageClass: upload.StorageClass,
+          owner: upload.Owner,
+        }));
+
+        return {
+          success: true,
+          uploads: uploads,
+          bucket: response.Bucket,
+          keyMarker: response.KeyMarker,
+          uploadIdMarker: response.UploadIdMarker,
+          nextKeyMarker: response.NextKeyMarker,
+          nextUploadIdMarker: response.NextUploadIdMarker,
+          maxUploads: response.MaxUploads,
+          isTruncated: response.IsTruncated,
+          prefix: response.Prefix,
+        };
+      },
+      "列出进行中的分片上传",
+      "列出进行中的分片上传失败"
+    );
+  }
+
+  /**
+   * 列出已上传的分片
+   * @param {string} s3SubPath - S3子路径
+   * @param {string} uploadId - 上传ID
+   * @param {Object} options - 选项参数
+   * @returns {Promise<Object>} 已上传的分片列表
+   */
+  async listMultipartParts(s3SubPath, uploadId, options = {}) {
+    const { maxParts = 1000, partNumberMarker } = options;
+
+    return handleFsError(
+      async () => {
+        const listCommand = new ListPartsCommand({
+          Bucket: this.config.bucket_name,
+          Key: s3SubPath,
+          UploadId: uploadId,
+          MaxParts: maxParts,
+          PartNumberMarker: partNumberMarker,
+        });
+
+        const response = await this.s3Client.send(listCommand);
+
+        // 格式化响应数据
+        const parts = (response.Parts || []).map((part) => ({
+          partNumber: part.PartNumber,
+          lastModified: part.LastModified,
+          etag: part.ETag,
+          size: part.Size,
+        }));
+
+        return {
+          success: true,
+          parts: parts,
+          bucket: response.Bucket,
+          key: response.Key,
+          uploadId: response.UploadId,
+          partNumberMarker: response.PartNumberMarker,
+          nextPartNumberMarker: response.NextPartNumberMarker,
+          maxParts: response.MaxParts,
+          isTruncated: response.IsTruncated,
+          storageClass: response.StorageClass,
+          owner: response.Owner,
+        };
+      },
+      "列出已上传的分片",
+      "列出已上传的分片失败"
+    );
+  }
+
+  /**
+   * 为现有上传刷新预签名URL
+   * @param {string} s3SubPath - S3子路径
+   * @param {string} uploadId - 现有的上传ID
+   * @param {Array} partNumbers - 需要刷新URL的分片编号数组
+   * @param {Object} options - 选项参数
+   * @returns {Promise<Object>} 刷新的预签名URL列表
+   */
+  async refreshMultipartUrls(s3SubPath, uploadId, partNumbers, options = {}) {
+    const { expiresIn = 3600 } = options; // 默认1小时过期
+
+    return handleFsError(
+      async () => {
+        const presignedUrls = [];
+
+        // 为每个分片生成预签名URL
+        for (const partNumber of partNumbers) {
+          const command = new UploadPartCommand({
+            Bucket: this.config.bucket_name,
+            Key: s3SubPath,
+            UploadId: uploadId,
+            PartNumber: partNumber,
+          });
+
+          const presignedUrl = await getSignedUrl(this.s3Client, command, {
+            expiresIn: expiresIn,
+          });
+
+          presignedUrls.push({
+            partNumber: partNumber,
+            url: presignedUrl,
+          });
+        }
+
+        return {
+          success: true,
+          uploadId: uploadId,
+          presignedUrls: presignedUrls,
+          expiresIn: expiresIn,
+        };
+      },
+      "刷新分片上传预签名URL",
+      "刷新分片上传预签名URL失败"
     );
   }
 }

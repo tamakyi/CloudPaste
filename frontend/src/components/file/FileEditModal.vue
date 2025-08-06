@@ -182,7 +182,7 @@ const fileData = reactive({
   max_views: null,
   expires_at: null,
   password: "",
-  use_proxy: true,
+  use_proxy: false,
 });
 
 // 过期时间选项
