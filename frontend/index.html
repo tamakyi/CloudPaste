@@ -13,7 +13,7 @@
     <title>狼的剪贴板 - 这里复制，那里粘贴</title>
     <!-- 运行时配置文件，添加时间戳防止缓存 -->
     <script>
-        // 添加时间戳防止缓存config.js
+        // 使用document.write确保config.js在main.js之前同步加载
         document.write('<script src="/config.js?t=' + new Date().getTime() + '"><\/script>');
     </script>
 </head>

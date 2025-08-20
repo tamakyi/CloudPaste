@@ -246,9 +246,9 @@ export class FileShareService {
 
     // 处理过期时间
     let expiresAt = null;
-    if (typeof expires_in === "number" && expires_in > 0) {
+    if (expires_in && parseInt(expires_in) > 0) {
       const expiresDate = new Date();
-      expiresDate.setHours(expiresDate.getHours() + expires_in);
+      expiresDate.setHours(expiresDate.getHours() + parseInt(expires_in));
       expiresAt = expiresDate.toISOString();
     }
 
@@ -442,8 +442,8 @@ export class FileShareService {
 
     try {
       // 清除相关缓存
-      const { clearCache } = await import("../utils/DirectoryCache.js");
-      await clearCache({ db: this.db, s3ConfigId: fileRecord.storage_config_id });
+      const { clearDirectoryCache } = await import("../cache/index.js");
+      await clearDirectoryCache({ db: this.db, s3ConfigId: fileRecord.storage_config_id });
     } catch (error) {
       console.warn("清除缓存失败:", error);
     }

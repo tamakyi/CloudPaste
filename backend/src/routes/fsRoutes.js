@@ -10,7 +10,7 @@ import { HTTPException } from "hono/http-exception";
 import { MountManager } from "../storage/managers/MountManager.js";
 import { FileSystem } from "../storage/fs/FileSystem.js";
 import { getMimeTypeFromFilename } from "../utils/fileUtils.js";
-import { clearCache } from "../utils/DirectoryCache.js";
+import { clearDirectoryCache } from "../cache/index.js";
 import { getS3ConfigByIdForAdmin, getPublicS3ConfigById } from "../services/s3ConfigService.js";
 import { getVirtualDirectoryListing, isVirtualPath } from "../storage/fs/utils/VirtualDirectory.js";
 import { RepositoryFactory } from "../repositories/index.js";
@@ -210,9 +210,15 @@ fsRoutes.options("/api/fs/multipart/part", (c) => {
 fsRoutes.get("/api/fs/list", authGateway.requireMount(), unifiedFsAuthMiddleware, async (c) => {
   const db = c.env.DB;
   const path = c.req.query("path") || "/";
+  const refresh = c.req.query("refresh") === "true";
   const userInfo = c.get("userInfo");
   const { userIdOrInfo, userType } = getServiceParams(userInfo);
   const encryptionSecret = c.env.ENCRYPTION_SECRET;
+
+  // 调试日志：记录refresh参数
+  if (refresh) {
+    console.log("[后端路由] 收到强制刷新请求:", { path, refresh });
+  }
 
   try {
     // 对于API密钥用户，检查请求路径是否在基本路径权限范围内
@@ -244,8 +250,8 @@ fsRoutes.get("/api/fs/list", authGateway.requireMount(), unifiedFsAuthMiddleware
     const mountManager = new MountManager(db, encryptionSecret);
     const fileSystem = new FileSystem(mountManager);
 
-    // 调用FileSystem的listDirectory方法
-    const result = await fileSystem.listDirectory(path, userIdOrInfo, userType);
+    // 调用FileSystem的listDirectory方法，传递refresh选项
+    const result = await fileSystem.listDirectory(path, userIdOrInfo, userType, { refresh });
 
     return c.json({
       code: ApiStatus.SUCCESS,
@@ -469,9 +475,9 @@ fsRoutes.post("/api/fs/rename", authGateway.requireMountRename(), unifiedFsAuthM
       const { mount } = await mountManager.getDriverByPath(oldPath, userIdOrInfo, userType);
       const { mount: newMount } = await mountManager.getDriverByPath(newPath, userIdOrInfo, userType);
 
-      await clearCache({ mountId: mount.id });
+      await clearDirectoryCache({ mountId: mount.id });
       if (newMount.id !== mount.id) {
-        await clearCache({ mountId: newMount.id });
+        await clearDirectoryCache({ mountId: newMount.id });
       }
       console.log(`重命名操作完成后缓存已刷新：${oldPath} -> ${newPath}`);
     } catch (cacheError) {
@@ -536,7 +542,7 @@ fsRoutes.delete("/api/fs/batch-remove", authGateway.requireMountDelete(), unifie
     // 清理缓存
     try {
       for (const mountId of mountIds) {
-        await clearCache({ mountId });
+        await clearDirectoryCache({ mountId });
       }
       console.log(`批量删除操作完成后缓存已刷新：${mountIds.size} 个挂载点`);
     } catch (cacheError) {
@@ -1036,7 +1042,7 @@ fsRoutes.post("/api/fs/presign/commit", authGateway.requireMountUpload(), unifie
 
     // 执行缓存清理
     try {
-      await clearCache({ mountId: mountId });
+      await clearDirectoryCache({ mountId: mountId });
       console.log(`预签名上传完成后缓存已刷新：挂载点=${mountId}, 文件=${fileName}`);
     } catch (cacheError) {
       console.warn(`执行缓存清理时出错: ${cacheError.message}`);
@@ -1092,7 +1098,7 @@ fsRoutes.post("/api/fs/update", authGateway.requireMountUpload(), unifiedFsAuthM
     // 清理缓存 - 需要获取mount信息
     try {
       const { mount } = await mountManager.getDriverByPath(path, userIdOrInfo, userType);
-      await clearCache({ mountId: mount.id });
+      await clearDirectoryCache({ mountId: mount.id });
       console.log(`更新文件操作完成后缓存已刷新：挂载点=${mount.id}, 路径=${path}`);
     } catch (cacheError) {
       console.warn(`执行缓存清理时出错: ${cacheError.message}`);
@@ -1176,7 +1182,7 @@ fsRoutes.post("/api/fs/batch-copy", authGateway.requireMountCopy(), unifiedFsAut
     // 清理所有相关路径的缓存
     try {
       for (const mountId of allMountIds) {
-        await clearCache({ mountId });
+        await clearDirectoryCache({ mountId });
       }
       console.log(`批量复制操作完成后缓存已刷新：源挂载点=${sourceMountIds.size}个，目标挂载点=${targetMountIds.size}个，总计=${allMountIds.size}个`);
     } catch (cacheError) {
@@ -1199,7 +1205,7 @@ fsRoutes.post("/api/fs/batch-copy", authGateway.requireMountCopy(), unifiedFsAut
 
       return c.json({
         code: ApiStatus.SUCCESS,
-        message: `批量复制请求处理完成，包含跨存储操作`,
+        message: "FILE_COPY_SUCCESS", // 标准消息标识，让前端统一生成消息
         data: {
           crossStorage: true,
           requiresClientSideCopy: true,
@@ -1219,7 +1225,7 @@ fsRoutes.post("/api/fs/batch-copy", authGateway.requireMountCopy(), unifiedFsAut
     // 返回标准复制结果
     return c.json({
       code: ApiStatus.SUCCESS,
-      message: `批量复制完成，成功: ${totalSuccess}，跳过: ${totalSkipped}，失败: ${totalFailed}`,
+      message: "FILE_COPY_SUCCESS",
       data: {
         crossStorage: false,
         success: totalSuccess,
@@ -1302,7 +1308,7 @@ fsRoutes.post("/api/fs/batch-copy-commit", authGateway.requireMountCopy(), unifi
 
     // 执行缓存清理 - 使用统一的clearCache函数
     try {
-      await clearCache({ mountId: mount.id });
+      await clearDirectoryCache({ mountId: mount.id });
       console.log(`批量复制完成后缓存已刷新：挂载点=${mount.id}, 共处理了${results.success.length}个文件`);
     } catch (cacheError) {
       console.warn(`执行缓存清理时出错: ${cacheError.message}`);
@@ -1316,20 +1322,13 @@ fsRoutes.post("/api/fs/batch-copy-commit", authGateway.requireMountCopy(), unifi
     // 如果有失败且没有任何成功的项目，则认为完全失败
     const overallSuccess = hasSuccess;
 
-    // 生成合适的消息
-    let message;
-    if (hasFailures && hasSuccess) {
-      message = `批量复制部分完成，成功: ${results.success.length}，失败: ${results.failed.length}`;
-    } else if (hasFailures) {
-      message = `批量复制失败，成功: ${results.success.length}，失败: ${results.failed.length}`;
-    } else {
-      message = `批量复制完成，成功: ${results.success.length}，失败: ${results.failed.length}`;
-    }
-
     return c.json({
       code: overallSuccess ? ApiStatus.SUCCESS : ApiStatus.ACCEPTED,
-      message: message,
-      data: results,
+      message: "FILE_COPY_SUCCESS", // 标准消息标识，让前端统一生成消息
+      data: {
+        ...results,
+        crossStorage: true, // 标记为跨存储复制提交
+      },
       success: overallSuccess,
     });
   } catch (error) {

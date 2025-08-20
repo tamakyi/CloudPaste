@@ -4,8 +4,8 @@
  */
 import { MountManager } from "../../storage/managers/MountManager.js";
 import { FileSystem } from "../../storage/fs/FileSystem.js";
-import { handleWebDAVError, createWebDAVErrorResponse } from "../utils/errorUtils.js";
-import { clearCache } from "../../utils/DirectoryCache.js";
+import { handleWebDAVError, createWebDAVErrorResponse, addCorsHeaders } from "../utils/errorUtils.js";
+import { clearDirectoryCache } from "../../cache/index.js";
 
 /**
  * 处理MKCOL请求
@@ -46,10 +46,10 @@ export async function handleMkcol(c, path, userId, userType, db) {
         // 对于根目录请求，直接返回成功状态码（符合WebDAV标准处理）
         return new Response(null, {
           status: 201, // Created
-          headers: {
+          headers: addCorsHeaders({
             "Content-Type": "text/plain",
             "Content-Length": "0",
-          },
+          }),
         });
       } catch (error) {
         console.warn(`WebDAV MKCOL - 根目录验证失败: ${error.message}`);
@@ -66,7 +66,7 @@ export async function handleMkcol(c, path, userId, userType, db) {
       try {
         const { mount } = await mountManager.getDriverByPath(path, userId, userType);
         if (mount) {
-          await clearCache({ mountId: mount.id });
+          await clearDirectoryCache({ mountId: mount.id });
           console.log(`WebDAV MKCOL - 已清理挂载点 ${mount.id} 的缓存`);
         }
       } catch (cacheError) {
@@ -77,10 +77,10 @@ export async function handleMkcol(c, path, userId, userType, db) {
       // 返回成功响应（符合WebDAV MKCOL标准）
       return new Response(null, {
         status: 201, // Created
-        headers: {
+        headers: addCorsHeaders({
           "Content-Type": "text/plain",
           "Content-Length": "0",
-        },
+        }),
       });
     } catch (error) {
       // 处理FileSystem的409错误，严格遵循RFC 4918标准
@@ -90,18 +90,18 @@ export async function handleMkcol(c, path, userId, userType, db) {
           console.log(`WebDAV MKCOL - 目录已存在，返回405 Method Not Allowed: ${path}`);
           return new Response("Collection already exists", {
             status: 405, // Method Not Allowed
-            headers: {
+            headers: addCorsHeaders({
               "Content-Type": "text/plain",
-            },
+            }),
           });
         } else if (error.message === "父目录不存在") {
           // RFC 4918标准：父目录不存在时返回409 Conflict
           console.log(`WebDAV MKCOL - 父目录不存在，返回409 Conflict: ${path}`);
           return new Response("Parent collection does not exist", {
             status: 409, // Conflict
-            headers: {
+            headers: addCorsHeaders({
               "Content-Type": "text/plain",
-            },
+            }),
           });
         }
       }

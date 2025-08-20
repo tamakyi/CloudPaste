@@ -7,7 +7,7 @@ import { HTTPException } from "hono/http-exception";
 import { ApiStatus, FILE_TYPES, FILE_TYPE_NAMES } from "../../../../constants/index.js";
 import { S3Client, ListObjectsV2Command, PutObjectCommand, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { checkDirectoryExists, updateParentDirectoriesModifiedTime } from "../utils/S3DirectoryUtils.js";
-import { directoryCacheManager, clearCache } from "../../../../utils/DirectoryCache.js";
+import { directoryCacheManager, clearDirectoryCache } from "../../../../cache/index.js";
 import { handleFsError } from "../../../fs/utils/ErrorHandler.js";
 import { GetFileType, getFileTypeName } from "../../../../utils/fileTypeDetector.js";
 
@@ -100,15 +100,16 @@ export class S3DirectoryOperations {
    * 列出目录内容
    * @param {string} s3SubPath - S3子路径
    * @param {Object} options - 选项参数
+   * @param {boolean} options.refresh - 是否强制刷新，跳过缓存
    * @returns {Promise<Object>} 目录内容
    */
   async listDirectory(s3SubPath, options = {}) {
-    const { mount, subPath, db } = options;
+    const { mount, subPath, db, refresh = false } = options;
 
     return handleFsError(
       async () => {
-        // 检查缓存
-        if (mount.cache_ttl > 0) {
+        // 只有在非强制刷新时才检查缓存
+        if (!refresh && mount.cache_ttl > 0) {
           const cachedResult = directoryCacheManager.get(mount.id, subPath);
           if (cachedResult && cachedResult.items) {
             // 检查缓存是否包含文件夹大小信息（新版本缓存）
@@ -123,6 +124,7 @@ export class S3DirectoryOperations {
             }
           }
         }
+
 
         // 构造返回结果结构
         const result = {
@@ -284,7 +286,7 @@ export class S3DirectoryOperations {
 
         // 清除缓存，因为目录结构已变更
         if (mount && mount.id && subPath !== "/") {
-          await clearCache({ mountId: mount.id });
+          await clearDirectoryCache({ mountId: mount.id });
           console.log(`已清理挂载点 ${mount.id} 的缓存`);
         }
 
@@ -355,7 +357,7 @@ export class S3DirectoryOperations {
         const putParams = {
           Bucket: this.config.bucket_name,
           Key: s3SubPath,
-          Body: "",
+          Body: Buffer.from("", "utf-8"),
           ContentType: "application/x-directory",
         };
 
