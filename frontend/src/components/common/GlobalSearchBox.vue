@@ -3,9 +3,7 @@
     <div class="relative">
       <!-- 搜索图标 -->
       <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-gray-400 dark:text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-        </svg>
+        <IconSearch size="sm" class="text-gray-400 dark:text-gray-500" />
       </div>
 
       <!-- 搜索输入框 -->
@@ -28,9 +26,7 @@
           class="text-gray-400 dark:text-gray-500 hover:text-gray-600 dark:hover:text-gray-300 focus:outline-none focus:text-gray-600 dark:focus:text-gray-300 transition-colors duration-200"
           :title="clearButtonTitle"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-          </svg>
+          <IconClose size="sm" />
         </button>
       </div>
     </div>
@@ -44,6 +40,8 @@
 
 <script setup>
 import { computed } from "vue";
+import { useDebounceFn } from "@vueuse/core";
+import { IconClose, IconSearch } from "@/components/icons";
 
 const props = defineProps({
   modelValue: {
@@ -94,7 +92,15 @@ const sizeClass = computed(() => {
 });
 
 // 防抖处理
-let debounceTimer = null;
+const emitSearchDebounced = useDebounceFn(
+  (value) => {
+    // 只有达到最小搜索长度或为空时才触发搜索
+    if (value.length >= props.minSearchLength || value.length === 0) {
+      emit("search", value);
+    }
+  },
+  () => props.debounceMs
+);
 
 const handleInput = (event) => {
   const value = event.target.value;
@@ -102,17 +108,8 @@ const handleInput = (event) => {
   // 立即更新v-model
   emit("update:modelValue", value);
 
-  // 防抖处理搜索事件
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-  }
-
-  debounceTimer = setTimeout(() => {
-    // 只有达到最小搜索长度或为空时才触发搜索
-    if (value.length >= props.minSearchLength || value.length === 0) {
-      emit("search", value);
-    }
-  }, props.debounceMs);
+  // 防抖触发搜索事件
+  emitSearchDebounced(value);
 };
 
 const clearSearch = () => {
@@ -120,8 +117,6 @@ const clearSearch = () => {
   emit("search", "");
   emit("clear");
 
-  if (debounceTimer) {
-    clearTimeout(debounceTimer);
-  }
+  emitSearchDebounced.cancel?.();
 };
 </script>

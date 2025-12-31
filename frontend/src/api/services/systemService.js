@@ -38,6 +38,20 @@ export async function getMaxUploadSize() {
   }
 }
 
+/**
+ * 获取上传进度（通用后端进度接口）
+ * @param {string} uploadId 上传ID
+ * @returns {Promise<Object>} 进度信息 { id, loaded, total, completed, path, storageType, updatedAt }
+ */
+export function getUploadProgress(uploadId) {
+  if (!uploadId) {
+    throw new Error("uploadId is required");
+  }
+  const params = new URLSearchParams();
+  params.append("upload_id", uploadId);
+  return get(`/upload/progress?${params.toString()}`);
+}
+
 /******************************************************************************
  * 分组设置管理API
  ******************************************************************************/
@@ -115,7 +129,7 @@ export function clearExpiredPastes() {
  * 清理目录缓存（管理员）
  * @param {Object} options - 清理选项
  * @param {string} [options.mountId] - 要清理的挂载点ID
- * @param {string} [options.s3ConfigId] - S3配置ID
+ * @param {string} [options.storageConfigId] - 存储配置ID
  * @returns {Promise<Object>} 清理结果
  */
 export function clearCacheAdmin(options = {}) {
@@ -126,7 +140,7 @@ export function clearCacheAdmin(options = {}) {
  * 清理目录缓存（API密钥用户）
  * @param {Object} options - 清理选项
  * @param {string} [options.mountId] - 要清理的挂载点ID
- * @param {string} [options.s3ConfigId] - S3配置ID
+ * @param {string} [options.storageConfigId] - 存储配置ID
  * @returns {Promise<Object>} 清理结果
  */
 export function clearCacheUser(options = {}) {
@@ -155,4 +169,16 @@ export function healthCheck() {
  */
 export function getVersionInfo() {
   return get("/version");
+}
+
+/******************************************************************************
+ * 游客模式相关 API
+ ******************************************************************************/
+
+/**
+ * 获取游客模式配置（Guest API Key）
+ * @returns {Promise<Object>} 游客配置，包含 enabled/key/permissions/basic_path 等
+ */
+export function getGuestConfig() {
+  return get("/public/guest-config");
 }

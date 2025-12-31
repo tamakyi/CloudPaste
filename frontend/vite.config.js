@@ -2,6 +2,9 @@ import { defineConfig, loadEnv } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
+import Icons from "unplugin-icons/vite";
+import Components from "unplugin-vue-components/vite";
+import IconsResolver from "unplugin-icons/resolver";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ command, mode }) => {
@@ -9,8 +12,9 @@ export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, process.cwd(), "");
 
   // 统一版本管理
-  const APP_VERSION = "0.8.1";
+  const APP_VERSION = "1.8.0";
   const isDev = command === "serve";
+  const enablePwa = command === "build";
 
   // 打印环境变量，帮助调试
   console.log("Vite环境变量:", {
@@ -21,22 +25,52 @@ export default defineConfig(({ command, mode }) => {
     COMMAND: command,
   });
 
+  const foliatePdfStubPath = fileURLToPath(new URL("./src/vendor/foliate-js/pdf.js", import.meta.url));
+
+  // foliate-js 的 view.js 会动态 import('./pdf.js')，但其 pdf.js 使用了 Vite 不兼容的 glob。
+  // CloudPaste 自身已有 PDF 预览，不需要 foliate-js 的 PDF 支持，因此把它替换为 stub，避免构建失败。
+  const foliatePdfStubPlugin = () => ({
+    name: "cloudpaste-foliate-pdf-stub",
+    enforce: "pre",
+    resolveId(source, importer) {
+      if (source !== "./pdf.js") return null;
+      if (!importer) return null;
+      if (importer.replaceAll("\\\\", "/").includes("/node_modules/foliate-js/view.js")) {
+        return foliatePdfStubPath;
+      }
+      return null;
+    },
+  });
+
   return {
+    base: '/',
     define: {
-      // 注入版本号到应用中
       __APP_VERSION__: JSON.stringify(APP_VERSION),
-      // 注入环境变量到应用中
       __APP_ENV__: JSON.stringify(env.VITE_APP_ENV || "production"),
       __BACKEND_URL__: JSON.stringify(env.VITE_BACKEND_URL || ""),
     },
     plugins: [
       vue(),
-      VitePWA({
-        registerType: "autoUpdate",
-        injectRegister: "auto", //自动注入更新检测代码
-        devOptions: {
-          enabled: true, // 开发环境启用PWA
-        },
+      foliatePdfStubPlugin(),
+      Components({
+        dts: false,
+        resolvers: [
+          IconsResolver({
+            prefix: "i",
+            enabledCollections: ["mdi", "heroicons-outline", "heroicons-solid"],
+          }),
+        ],
+      }),
+      Icons({
+        compiler: "vue3",
+      }),
+      enablePwa &&
+        VitePWA({
+          registerType: "autoUpdate",
+          injectRegister: "auto", //自动注入更新检测代码
+          devOptions: {
+            enabled: false, //开发环境PWA启用
+          },
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,woff,woff2,ttf}"],
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
@@ -49,7 +83,7 @@ export default defineConfig(({ command, mode }) => {
           // 集成自定义Service Worker代码以支持Background Sync API
           importScripts: ["/sw-background-sync.js"],
 
-          // 基于主流PWA最佳实践的正确缓存策略
+          // PWA缓存策略
           runtimeCaching: [
             // 应用静态资源 - StaleWhileRevalidate
             {
@@ -59,7 +93,7 @@ export default defineConfig(({ command, mode }) => {
                 cacheName: "app-static-resources",
                 expiration: {
                   maxEntries: 1000,
-                  maxAgeSeconds: 7 * 24 * 60 * 60, // 7天（依赖Vite版本控制）
+                  maxAgeSeconds: 7 * 24 * 60 * 60,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -75,7 +109,7 @@ export default defineConfig(({ command, mode }) => {
                 cacheName: "fonts",
                 expiration: {
                   maxEntries: 50,
-                  maxAgeSeconds: 30 * 24 * 60 * 60, // 30天（字体变化频率低）
+                  maxAgeSeconds: 30 * 24 * 60 * 60, 
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -86,21 +120,21 @@ export default defineConfig(({ command, mode }) => {
             // 第三方CDN资源 - StaleWhileRevalidate
             {
               urlPattern: ({ url }) =>
-                  url.origin !== self.location.origin &&
-                  (url.hostname.includes("cdn") ||
-                      url.hostname.includes("googleapis") ||
-                      url.hostname.includes("gstatic") ||
-                      url.hostname.includes("jsdelivr") ||
-                      url.hostname.includes("unpkg") ||
-                      url.hostname.includes("elemecdn") ||
-                      url.hostname.includes("bootcdn") ||
-                      url.hostname.includes("staticfile")),
+                url.origin !== self.location.origin &&
+                (url.hostname.includes("cdn") ||
+                  url.hostname.includes("googleapis") ||
+                  url.hostname.includes("gstatic") ||
+                  url.hostname.includes("jsdelivr") ||
+                  url.hostname.includes("unpkg") ||
+                  url.hostname.includes("elemecdn") ||
+                  url.hostname.includes("bootcdn") ||
+                  url.hostname.includes("staticfile")),
               handler: "StaleWhileRevalidate",
               options: {
                 cacheName: "external-cdn-resources",
                 expiration: {
                   maxEntries: 100,
-                  maxAgeSeconds: 30 * 24 * 60 * 60, // 30天
+                  maxAgeSeconds: 30 * 24 * 60 * 60, 
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -119,10 +153,10 @@ export default defineConfig(({ command, mode }) => {
               },
             },
 
-            // 图廊图片 - StaleWhileRevalidate（图片适合后台更新）
+            // 图廊图片 - StaleWhileRevalidate
             {
               urlPattern: ({ request, url }) =>
-                  request.destination === "image" && (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
+                request.destination === "image" && (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
               handler: "StaleWhileRevalidate",
               options: {
                 cacheName: "gallery-images",
@@ -136,31 +170,19 @@ export default defineConfig(({ command, mode }) => {
               },
             },
 
-            // 用户媒体文件 - NetworkFirst（大文件适度缓存）
+            // 用户媒体文件 - NetworkOnly
             {
               urlPattern: ({ request, url }) =>
-                  (request.destination === "video" || request.destination === "audio" || /\.(mp4|webm|ogg|mp3|wav|flac|aac)$/i.test(url.pathname)) &&
-                  (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "user-media",
-                expiration: {
-                  maxEntries: 30,
-                  maxAgeSeconds: 2 * 60 * 60, // 2小时（媒体文件较大，适度缓存）
-                },
-                networkTimeoutSeconds: 15,
-                cacheableResponse: {
-                  statuses: [0, 200, 206], // 支持范围请求
-                },
-                rangeRequests: true,
-              },
+                (request.destination === "video" || request.destination === "audio" || /\.(mp4|webm|ogg|mp3|wav|flac|aac)$/i.test(url.pathname)) &&
+                (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
+              handler: "NetworkOnly",
             },
 
             // 用户文档文件 - NetworkFirst（文档快速更新）
             {
               urlPattern: ({ url }) =>
-                  /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md)$/i.test(url.pathname) &&
-                  (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
+                /\.(pdf|doc|docx|xls|xlsx|ppt|pptx|txt|md)$/i.test(url.pathname) &&
+                (url.pathname.includes("/api/") || url.searchParams.has("X-Amz-Algorithm") || url.hostname !== self.location.hostname),
               handler: "NetworkFirst",
               options: {
                 cacheName: "user-documents",
@@ -199,7 +221,7 @@ export default defineConfig(({ command, mode }) => {
                 cacheName: "system-api",
                 expiration: {
                   maxEntries: 10,
-                  maxAgeSeconds: 30 * 60, // 30分钟
+                  maxAgeSeconds: 30 * 60,
                 },
                 networkTimeoutSeconds: 3,
                 cacheableResponse: {
@@ -226,7 +248,7 @@ export default defineConfig(({ command, mode }) => {
               },
             },
 
-            // 文本分享API - NetworkOnly（涉及访问计数，必须实时）
+            // 文本分享API - NetworkOnly
             {
               urlPattern: /^.*\/api\/(pastes|paste|raw)\/.*$/,
               handler: "NetworkOnly",
@@ -261,7 +283,7 @@ export default defineConfig(({ command, mode }) => {
                 cacheName: "public-api",
                 expiration: {
                   maxEntries: 50,
-                  maxAgeSeconds: 60 * 60, // 1小时（公共内容相对稳定）
+                  maxAgeSeconds: 60 * 60,
                 },
                 cacheableResponse: {
                   statuses: [0, 200],
@@ -307,62 +329,28 @@ export default defineConfig(({ command, mode }) => {
             // 管理员配置写入API - NetworkOnly（POST/PUT/DELETE操作）
             {
               urlPattern: ({ request, url }) =>
-                  ["POST", "PUT", "DELETE"].includes(request.method) &&
-                  /^.*\/api\/(mount\/(create|[^\/]+)|admin\/api-keys|admin\/system-settings|admin\/login|admin\/change-password|admin\/cache).*$/.test(url.href),
+                ["POST", "PUT", "DELETE"].includes(request.method) &&
+                /^.*\/api\/(mount\/(create|[^\/]+)|admin\/api-keys|admin\/system-settings|admin\/login|admin\/change-password|admin\/cache).*$/.test(url.href),
               handler: "NetworkOnly",
               options: {
                 cacheName: "admin-config-write",
-              },
-            },
-
-            // 页面导航缓存 - NetworkFirst（页面短期缓存）
-            {
-              urlPattern: ({ request }) => request.mode === "navigate",
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "pages",
-                expiration: {
-                  maxEntries: 20,
-                  maxAgeSeconds: 2 * 60 * 60, // 2小时
-                },
-                networkTimeoutSeconds: 3,
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
-              },
-            },
-
-            // 通用API回退缓存 - NetworkFirst（其他API短期缓存）
-            {
-              urlPattern: /^.*\/api\/.*$/,
-              handler: "NetworkFirst",
-              options: {
-                cacheName: "api-fallback",
-                expiration: {
-                  maxEntries: 30,
-                  maxAgeSeconds: 10 * 60, // 10分钟
-                },
-                networkTimeoutSeconds: 5,
-                cacheableResponse: {
-                  statuses: [0, 200],
-                },
               },
             },
           ],
         },
         includeAssets: ["favicon.ico", "apple-touch-icon.png", "robots.txt", "dist/**/*"],
         manifest: {
-          name: "狼的剪贴板",
-          short_name: "狼的剪贴板",
-          description: "狼的剪贴板 - 这里复制，那里粘贴",
+          name: "CloudPaste",
+          short_name: "CloudPaste",
+          description: "安全分享您的内容，支持 Markdown 编辑和文件上传",
           theme_color: "#0ea5e9",
           background_color: "#ffffff",
           display: "standalone",
-          orientation: "portrait-primary", // 与manifest.json保持一致
+          orientation: "portrait-primary",
           scope: "/",
           start_url: "/",
-          lang: "zh-CN", // 添加语言设置
-          categories: ["productivity", "utilities"], // 添加应用分类
+          lang: "zh-CN",
+          categories: ["productivity", "utilities"],
           icons: [
             {
               src: "icons/icons-32.png",
@@ -406,8 +394,8 @@ export default defineConfig(({ command, mode }) => {
             },
           ],
         },
-      }),
-    ],
+        }),
+    ].filter(Boolean),
     resolve: {
       alias: {
         "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -438,11 +426,22 @@ export default defineConfig(({ command, mode }) => {
         },
       },
     },
+    // foliate-js 的部分模块（例如 pdf.js）使用了 top-level await。
+    // 为了让 Vite/esbuild 在 dev 与 build 阶段都能正常处理，我们将 target 提升到 ES2022。
+    esbuild: {
+      target: "es2022",
+    },
     optimizeDeps: {
-      include: ["vue-i18n", "chart.js", "qrcode", "mime-db"],
-      // 移除vditor排除配置，因为现在从本地dist目录加载
+      include: ["vue-i18n", "chart.js", "qrcode", "mime-db", "docx-preview"],
+      // 跳过预构建，让 Vite 按原始 ESM 处理
+      exclude: ["foliate-js"],
+      esbuildOptions: {
+        target: "es2022",
+      },
     },
     build: {
+      outDir: 'dist', // 显式指定输出目录
+      target: "es2022",
       minify: "terser",
       terserOptions: {
         compress: {
@@ -456,7 +455,8 @@ export default defineConfig(({ command, mode }) => {
             // 将大型库分离到单独的 chunk
             "vendor-vue": ["vue", "vue-router", "vue-i18n"],
             "vendor-charts": ["chart.js", "vue-chartjs"],
-            "vendor-utils": ["axios", "qrcode", "file-saver", "docx", "html-to-image"],
+            "vendor-utils": ["qrcode", "file-saver", "docx", "@zumer/snapdom"],
+            "office-viewer": ["docx-preview", "@vue-office/excel/lib/v3/index.js", "@vue-office/pptx/lib/v3/index.js"],
           },
         },
       },

@@ -5,6 +5,7 @@
 
 import { BaseRepository } from "./BaseRepository.js";
 import { DbTables } from "../constants/index.js";
+import { ValidationError } from "../http/errors.js";
 
 export class FileRepository extends BaseRepository {
   /**
@@ -40,39 +41,32 @@ export class FileRepository extends BaseRepository {
       SELECT
         f.*,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.endpoint_url
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.endpoint_url')
           ELSE NULL
         END as endpoint_url,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.bucket_name
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.bucket_name')
           ELSE NULL
         END as bucket_name,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.region
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.region')
           ELSE NULL
         END as region,
+        NULL as access_key_id,
+        NULL as secret_access_key,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.access_key_id
-          ELSE NULL
-        END as access_key_id,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.secret_access_key
-          ELSE NULL
-        END as secret_access_key,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.path_style
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.path_style')
           ELSE NULL
         END as path_style,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.provider_type
-          ELSE NULL
+          WHEN f.storage_type = 'S3'
+            THEN COALESCE(json_extract(s.config_json,'$.provider_type'), 'S3')
+          ELSE s.storage_type
         END as storage_provider_type,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.name
-          ELSE NULL
-        END as storage_config_name
+        s.name as storage_config_name,
+        s.url_proxy as url_proxy
       FROM ${DbTables.FILES} f
-      LEFT JOIN ${DbTables.S3_CONFIGS} s ON f.storage_type = 'S3' AND f.storage_config_id = s.id
+      LEFT JOIN ${DbTables.STORAGE_CONFIGS} s ON f.storage_config_id = s.id
       WHERE f.slug = ?
       `,
       [slug]
@@ -92,39 +86,31 @@ export class FileRepository extends BaseRepository {
       SELECT
         f.*,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.endpoint_url
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.endpoint_url')
           ELSE NULL
         END as endpoint_url,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.bucket_name
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.bucket_name')
           ELSE NULL
         END as bucket_name,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.region
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.region')
           ELSE NULL
         END as region,
+        NULL as access_key_id,
+        NULL as secret_access_key,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.access_key_id
-          ELSE NULL
-        END as access_key_id,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.secret_access_key
-          ELSE NULL
-        END as secret_access_key,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.path_style
+          WHEN f.storage_type = 'S3' THEN json_extract(s.config_json,'$.path_style')
           ELSE NULL
         END as path_style,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.provider_type
-          ELSE NULL
+          WHEN f.storage_type = 'S3'
+            THEN COALESCE(json_extract(s.config_json,'$.provider_type'), 'S3')
+          ELSE s.storage_type
         END as storage_provider_type,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.name
-          ELSE NULL
-        END as storage_config_name
+        s.name as storage_config_name
       FROM ${DbTables.FILES} f
-      LEFT JOIN ${DbTables.S3_CONFIGS} s ON f.storage_type = 'S3' AND f.storage_config_id = s.id
+      LEFT JOIN ${DbTables.STORAGE_CONFIGS} s ON f.storage_config_id = s.id
       WHERE f.id = ?
       `,
       [fileId]
@@ -214,7 +200,7 @@ export class FileRepository extends BaseRepository {
    */
   async findByStorageConfigId(storageConfigId, storageType, options = {}) {
     if (!storageType) {
-      throw new Error("存储类型参数是必需的");
+      throw new ValidationError("存储类型参数是必需的");
     }
     return await this.findMany(
       DbTables.FILES,
@@ -277,7 +263,7 @@ export class FileRepository extends BaseRepository {
    */
   async getTotalSizeByStorageConfigExcludingFile(storageConfigId, excludeFileId, storageType) {
     if (!storageType) {
-      throw new Error("存储类型参数是必需的");
+      throw new ValidationError("存储类型参数是必需的");
     }
     const result = await this.queryFirst(`SELECT COALESCE(SUM(size), 0) as total_used FROM ${DbTables.FILES} WHERE storage_type = ? AND storage_config_id = ? AND id != ?`, [
       storageType,
@@ -334,7 +320,7 @@ export class FileRepository extends BaseRepository {
    */
   async existsByStoragePath(storageConfigId, storagePath, storageType) {
     if (!storageType) {
-      throw new Error("存储类型参数是必需的");
+      throw new ValidationError("存储类型参数是必需的");
     }
     return await this.exists(DbTables.FILES, {
       storage_config_id: storageConfigId,
@@ -352,7 +338,7 @@ export class FileRepository extends BaseRepository {
    */
   async findByStoragePath(storageConfigId, storagePath, storageType) {
     if (!storageType) {
-      throw new Error("存储类型参数是必需的");
+      throw new ValidationError("存储类型参数是必需的");
     }
     return await this.findOne(DbTables.FILES, {
       storage_config_id: storageConfigId,
@@ -369,7 +355,7 @@ export class FileRepository extends BaseRepository {
    */
   async countByStorageConfigId(storageConfigId, storageType) {
     if (!storageType) {
-      throw new Error("存储类型参数是必需的");
+      throw new ValidationError("存储类型参数是必需的");
     }
     return await super.count(DbTables.FILES, {
       storage_config_id: storageConfigId,
@@ -396,21 +382,15 @@ export class FileRepository extends BaseRepository {
         f.storage_type, f.file_path, f.mimetype, f.size, f.remark,
         f.created_at, f.views, f.max_views, f.expires_at, f.etag,
         f.password, f.created_by, f.use_proxy,
+        s.name as storage_config_name,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.name
-          ELSE NULL
-        END as storage_config_name,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.provider_type
-          ELSE NULL
+          WHEN f.storage_type = 'S3'
+            THEN COALESCE(json_extract(s.config_json,'$.provider_type'), 'S3')
+          ELSE s.storage_type
         END as storage_provider_type,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.id
-          ELSE NULL
-        END as storage_config_detail_id,
         ak.name as key_name
       FROM ${DbTables.FILES} f
-      LEFT JOIN ${DbTables.S3_CONFIGS} s ON f.storage_type = 'S3' AND f.storage_config_id = s.id
+      LEFT JOIN ${DbTables.STORAGE_CONFIGS} s ON f.storage_config_id = s.id
       LEFT JOIN ${DbTables.API_KEYS} ak ON f.created_by LIKE 'apikey:%' AND ak.id = SUBSTR(f.created_by, 8)
     `;
 
@@ -551,21 +531,15 @@ export class FileRepository extends BaseRepository {
         f.storage_type, f.file_path, f.mimetype, f.size, f.remark,
         f.created_at, f.views, f.max_views, f.expires_at, f.etag,
         f.password, f.created_by, f.use_proxy,
+        s.name as storage_config_name,
         CASE
-          WHEN f.storage_type = 'S3' THEN s.name
-          ELSE NULL
-        END as storage_config_name,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.provider_type
-          ELSE NULL
+          WHEN f.storage_type = 'S3'
+            THEN COALESCE(json_extract(s.config_json,'$.provider_type'), 'S3')
+          ELSE s.storage_type
         END as storage_provider_type,
-        CASE
-          WHEN f.storage_type = 'S3' THEN s.id
-          ELSE NULL
-        END as storage_config_detail_id,
         ak.name as key_name
       FROM ${DbTables.FILES} f
-      LEFT JOIN ${DbTables.S3_CONFIGS} s ON f.storage_type = 'S3' AND f.storage_config_id = s.id
+      LEFT JOIN ${DbTables.STORAGE_CONFIGS} s ON f.storage_config_id = s.id
       LEFT JOIN ${DbTables.API_KEYS} ak ON f.created_by LIKE 'apikey:%' AND ak.id = SUBSTR(f.created_by, 8)
       WHERE ${whereClause}
       ORDER BY f.created_at DESC

@@ -1,28 +1,24 @@
 import { createI18n } from "vue-i18n";
+import { useLocalStorage } from "@vueuse/core";
 import zhCN from "./locales/zh-CN/index.js";
 import enUS from "./locales/en-US/index.js";
-import jaJP from "./locales/ja-JP/index.js";
 
 // 获取浏览器语言设置
 const getBrowserLanguage = () => {
   const browserLang = navigator.language || navigator.userLanguage;
-  if (browserLang.startsWith("ja")) {  // 新增日语判断
-    return "ja-JP";
-  } else if (browserLang.startsWith("zh")) {  // 保持原有中文判断
+  if (browserLang.startsWith("zh")) {
     return "zh-CN";
   }
-  return "en-US";  // 默认英文
+  return "en-US";
 };
 
 // 获取保存的语言设置，如果没有则使用浏览器语言
-const getSavedLanguage = () => {
-  const savedLang = localStorage.getItem("language");
-  return savedLang || getBrowserLanguage();
-};
+const storedLanguage = useLocalStorage("language", getBrowserLanguage());
+const getSavedLanguage = () => storedLanguage.value || getBrowserLanguage();
 
 // 保存语言设置到本地存储
 export const saveLanguagePreference = (lang) => {
-  localStorage.setItem("language", lang);
+  storedLanguage.value = lang;
 };
 
 // 创建i18n实例
@@ -33,7 +29,6 @@ const i18n = createI18n({
   messages: {
     "zh-CN": zhCN,
     "en-US": enUS,
-    "ja-JP": jaJP,
   },
   // 确保正确处理日期和数字等格式化
   globalInjection: true,

@@ -1,10 +1,15 @@
 export default {
   common: {
+    error: "错误",
+    retry: "重试",
     unknown: "未知",
     loading: "加载中...",
     confirm: "确认",
     cancel: "取消",
+    enabled: "启用",
+    disabled: "禁用",
     back: "返回",
+    backToTop: "返回顶部",
     close: "关闭",
     required: "请填写必填项",
     noPermission: "无此功能权限，请联系管理员",
@@ -13,6 +18,19 @@ export default {
     actions: "操作",
     reset: "重置",
     selectOption: "请选择",
+    pleaseSelect: "请选择",
+    // 时间单位
+    second: "秒",
+    minute: "分",
+    hour: "时",
+    day: "天",
+    now: "现在",
+    ago: "前",
+    // 时间单位（复数形式）
+    seconds: "秒",
+    minutes: "分",
+    hours: "时",
+    days: "天",
     pagination: {
       previousPage: "上一页",
       nextPage: "下一页",
@@ -39,12 +57,31 @@ export default {
       processing: "处理中...",
       requiredField: "此字段为必填项",
       invalidInput: "输入值无效",
+      invalidNameEmpty: "名称不能为空",
+      invalidNameDots: "名称不能是 . 或 ..",
+      invalidNameChars: "名称不能包含 / \\ ? < > * : | \" 这些字符",
+      // 通用删除确认对话框
+      deleteTitle: "确认删除",
+      deleteItem: "确定要删除{name}吗？此操作不可恢复。",
+      deleteMultiple: "确定要删除选中的 {count} 项吗？此操作不可恢复。",
+      deleteButton: "删除",
+      // 通用警告对话框
+      warningTitle: "警告",
+      // 通用清理对话框
+      cleanupTitle: "确认清理",
+      cleanupExpired: "确定要清理所有已过期的项目吗？此操作不可恢复。",
+      cleanupButton: "清理",
+      // 通用重置对话框
+      resetTitle: "确认重置",
+      resetConfirm: "确定要重置为默认设置吗？当前设置将会丢失。",
+      resetButton: "重置",
       selectUpload: {
         title: "选择要恢复的上传",
         description: "发现 {count} 个可恢复的上传，请选择一个继续：",
         recommended: "推荐",
         matchScore: "匹配度 {score}%",
         partsInfo: "{count}/{total} 分片",
+        partErrors: "失败 {count} 片",
         partialComplete: "部分完成",
         atLeastParts: "至少 {count} 分片",
         progressInfo: "{percentage}% ({uploaded}/{total}MB)",
@@ -57,7 +94,7 @@ export default {
     },
   },
   app: {
-    title: "狼的剪贴板",
+    title: "CloudPaste",
   },
   pageTitle: {
     // 主页面子标题（用于动态组合）
@@ -72,8 +109,9 @@ export default {
       dashboard: "仪表板",
       textManagement: "文本管理",
       fileManagement: "文件管理",
-      storageConfig: "S3存储配置",
+      storageConfig: "存储管理",
       mountManagement: "挂载管理",
+      fsMetaManagement: "元信息管理",
       keyManagement: "密钥管理",
       settings: "系统设置",
       globalSettings: "全局设置",
@@ -81,10 +119,12 @@ export default {
       accountSettings: "账号管理",
       webdavSettings: "WebDAV设置",
       siteSettings: "站点设置",
+      backup: "数据备份",
+      tasks: "任务管理",
     },
   },
   nav: {
-    home: "首页",
+    home: "文本编辑",
     upload: "文件上传",
     mountExplorer: "挂载浏览",
     admin: "管理面板",
@@ -108,6 +148,20 @@ export default {
     toggle: "切换语言",
     zh: "中文",
     en: "English",
-    ja: "日本語",
+  },
+  livePhoto: {
+    badge: "实况",
+    loading: "加载中...",
+    playHint: "悬停或长按播放",
+    errors: {
+      videoLoadFailed: "视频加载失败",
+      photoLoadFailed: "图片加载失败",
+      playbackFailed: "播放失败",
+      notAllowed: "浏览器未允许视频自动播放",
+      notSupported: "不支持此视频格式",
+      networkError: "网络错误，无法加载视频",
+      aborted: "视频加载被中断",
+      decodeFailed: "视频解码错误",
+    },
   },
 };

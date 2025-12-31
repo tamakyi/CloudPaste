@@ -6,21 +6,30 @@
 export { BaseRepository } from "./BaseRepository.js";
 export { FileRepository } from "./FileRepository.js";
 export { MountRepository } from "./MountRepository.js";
-export { S3ConfigRepository } from "./S3ConfigRepository.js";
+export { StorageConfigRepository } from "./StorageConfigRepository.js";
 export { AdminRepository } from "./AdminRepository.js";
 export { ApiKeyRepository } from "./ApiKeyRepository.js";
 export { PasteRepository } from "./PasteRepository.js";
 export { SystemRepository } from "./SystemRepository.js";
+export { PrincipalStorageAclRepository } from "./PrincipalStorageAclRepository.js";
+export { FsMetaRepository } from "./FsMetaRepository.js";
+export { UploadPartsRepository } from "./UploadPartsRepository.js";
+export { VfsNodesRepository } from "./VfsNodesRepository.js";
 
 // 导入所有Repository类用于工厂类
 import { BaseRepository } from "./BaseRepository.js";
 import { FileRepository } from "./FileRepository.js";
 import { MountRepository } from "./MountRepository.js";
-import { S3ConfigRepository } from "./S3ConfigRepository.js";
+import { StorageConfigRepository } from "./StorageConfigRepository.js";
 import { AdminRepository } from "./AdminRepository.js";
 import { ApiKeyRepository } from "./ApiKeyRepository.js";
 import { PasteRepository } from "./PasteRepository.js";
 import { SystemRepository } from "./SystemRepository.js";
+import { PrincipalStorageAclRepository } from "./PrincipalStorageAclRepository.js";
+import { FsMetaRepository } from "./FsMetaRepository.js";
+import { UploadPartsRepository } from "./UploadPartsRepository.js";
+import { VfsNodesRepository } from "./VfsNodesRepository.js";
+import { createDbRuntime } from "../db/runtime.js";
 
 /**
  * Repository工厂类
@@ -30,9 +39,14 @@ export class RepositoryFactory {
   /**
    * 构造函数
    * @param {D1Database} db - 数据库实例
+   * @param {{ env?: any, providerName?: string }} [options]
    */
-  constructor(db) {
-    this.db = db;
+  constructor(db, options = {}) {
+    const { env = {}, providerName = null } = options || {};
+    const runtime = createDbRuntime({ db, env, providerName });
+    this.db = runtime.db;
+    this.dialect = runtime.dialect;
+    this.providerName = runtime.providerName;
     this._repositories = new Map();
   }
 
@@ -42,7 +56,7 @@ export class RepositoryFactory {
    */
   getFileRepository() {
     if (!this._repositories.has("file")) {
-      this._repositories.set("file", new FileRepository(this.db));
+      this._repositories.set("file", new FileRepository(this.db, this.dialect));
     }
     return this._repositories.get("file");
   }
@@ -53,20 +67,20 @@ export class RepositoryFactory {
    */
   getMountRepository() {
     if (!this._repositories.has("mount")) {
-      this._repositories.set("mount", new MountRepository(this.db));
+      this._repositories.set("mount", new MountRepository(this.db, this.dialect));
     }
     return this._repositories.get("mount");
   }
 
   /**
-   * 获取S3ConfigRepository实例
-   * @returns {S3ConfigRepository} S3ConfigRepository实例
+   * 获取StorageConfigRepository实例（通用）
+   * @returns {StorageConfigRepository}
    */
-  getS3ConfigRepository() {
-    if (!this._repositories.has("s3config")) {
-      this._repositories.set("s3config", new S3ConfigRepository(this.db));
+  getStorageConfigRepository() {
+    if (!this._repositories.has("storageconfig")) {
+      this._repositories.set("storageconfig", new StorageConfigRepository(this.db, this.dialect));
     }
-    return this._repositories.get("s3config");
+    return this._repositories.get("storageconfig");
   }
 
   /**
@@ -75,7 +89,7 @@ export class RepositoryFactory {
    */
   getAdminRepository() {
     if (!this._repositories.has("admin")) {
-      this._repositories.set("admin", new AdminRepository(this.db));
+      this._repositories.set("admin", new AdminRepository(this.db, this.dialect));
     }
     return this._repositories.get("admin");
   }
@@ -86,7 +100,7 @@ export class RepositoryFactory {
    */
   getApiKeyRepository() {
     if (!this._repositories.has("apikey")) {
-      this._repositories.set("apikey", new ApiKeyRepository(this.db));
+      this._repositories.set("apikey", new ApiKeyRepository(this.db, this.dialect));
     }
     return this._repositories.get("apikey");
   }
@@ -97,7 +111,7 @@ export class RepositoryFactory {
    */
   getPasteRepository() {
     if (!this._repositories.has("paste")) {
-      this._repositories.set("paste", new PasteRepository(this.db));
+      this._repositories.set("paste", new PasteRepository(this.db, this.dialect));
     }
     return this._repositories.get("paste");
   }
@@ -108,9 +122,42 @@ export class RepositoryFactory {
    */
   getSystemRepository() {
     if (!this._repositories.has("system")) {
-      this._repositories.set("system", new SystemRepository(this.db));
+      this._repositories.set("system", new SystemRepository(this.db, this.dialect));
     }
     return this._repositories.get("system");
+  }
+
+  /**
+   * 获取 PrincipalStorageAclRepository 实例
+   * @returns {PrincipalStorageAclRepository} PrincipalStorageAclRepository 实例
+   */
+  getPrincipalStorageAclRepository() {
+    if (!this._repositories.has("principalStorageAcl")) {
+      this._repositories.set("principalStorageAcl", new PrincipalStorageAclRepository(this.db, this.dialect));
+    }
+    return this._repositories.get("principalStorageAcl");
+  }
+
+  /**
+   * 获取 UploadPartsRepository 实例
+   * @returns {UploadPartsRepository}
+   */
+  getUploadPartsRepository() {
+    if (!this._repositories.has("uploadParts")) {
+      this._repositories.set("uploadParts", new UploadPartsRepository(this.db, this.dialect));
+    }
+    return this._repositories.get("uploadParts");
+  }
+
+  /**
+   * 获取 VfsNodesRepository 实例
+   * @returns {VfsNodesRepository}
+   */
+  getVfsNodesRepository() {
+    if (!this._repositories.has("vfsNodes")) {
+      this._repositories.set("vfsNodes", new VfsNodesRepository(this.db, this.dialect));
+    }
+    return this._repositories.get("vfsNodes");
   }
 
   /**
@@ -128,11 +175,26 @@ export class RepositoryFactory {
     return {
       file: this.getFileRepository(),
       mount: this.getMountRepository(),
-      s3Config: this.getS3ConfigRepository(),
+      storageConfig: this.getStorageConfigRepository(),
       admin: this.getAdminRepository(),
       apiKey: this.getApiKeyRepository(),
       paste: this.getPasteRepository(),
       system: this.getSystemRepository(),
+      principalStorageAcl: this.getPrincipalStorageAclRepository(),
+      fsMeta: this.getFsMetaRepository(),
+      uploadParts: this.getUploadPartsRepository(),
+      vfsNodes: this.getVfsNodesRepository(),
     };
+  }
+
+  /**
+   * 获取 FsMetaRepository 实例
+   * @returns {FsMetaRepository}
+   */
+  getFsMetaRepository() {
+    if (!this._repositories.has("fsMeta")) {
+      this._repositories.set("fsMeta", new FsMetaRepository(this.db, this.dialect));
+    }
+    return this._repositories.get("fsMeta");
   }
 }

@@ -4,6 +4,8 @@
  * 支持本地开发、生产和Docker部署环境
  */
 
+import { useLocalStorage } from "@vueuse/core";
+
 // 默认的开发环境API基础URL
 const DEFAULT_DEV_API_URL = "http://localhost:8787";
 
@@ -26,7 +28,7 @@ function getApiBaseUrl() {
 
   // 非Docker环境下才检查localStorage
   if (!isDockerEnvironment() && typeof window !== "undefined" && window.localStorage) {
-    const storedUrl = localStorage.getItem("vite-api-base-url");
+    const storedUrl = useLocalStorage("vite-api-base-url", "").value;
     if (storedUrl) {
       console.log("非Docker环境：使用localStorage中的后端URL:", storedUrl);
       return storedUrl;
@@ -37,6 +39,12 @@ function getApiBaseUrl() {
   const envUrl = import.meta.env.VITE_BACKEND_URL;
   if (envUrl) {
     return envUrl;
+  }
+
+  // 生产环境：单 Worker 部署时使用同源（Cloudflare Workers SPA 模式）
+  if (import.meta.env.PROD && typeof window !== "undefined") {
+    console.log("生产环境：使用同源后端", window.location.origin);
+    return window.location.origin;
   }
 
   // 最后使用默认值

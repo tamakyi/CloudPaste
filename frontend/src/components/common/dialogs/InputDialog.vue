@@ -1,6 +1,7 @@
 <template>
-  <!-- 🔧 基于 ConfirmDialog 设计的输入对话框组件 -->
-  <div v-if="isOpen" class="fixed inset-0 z-[70] overflow-auto bg-black bg-opacity-50 flex items-center justify-center" @click="handleBackdropClick">
+  <!-- 基于 ConfirmDialog 设计的输入对话框组件，支持 modal 和 inline 两种模式 -->
+  <!-- Modal 模式 -->
+  <div v-if="isOpen && !inline" class="fixed inset-0 z-[70] overflow-auto bg-black bg-opacity-50 flex items-center justify-center" @click="handleBackdropClick">
     <div class="relative w-full max-w-md p-6 rounded-lg shadow-xl" :class="darkMode ? 'bg-gray-800' : 'bg-white'" @click.stop>
       <!-- 标题和描述 -->
       <div class="mb-4">
@@ -52,10 +53,89 @@
           :class="confirmButtonClass"
         >
           <!-- 加载状态图标 -->
-          <svg v-if="loading" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
+          <IconRefresh v-if="loading" class="animate-spin h-4 w-4" aria-hidden="true" />
+          <span>{{ loading ? displayLoadingText : displayConfirmText }}</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inline 模式 -->
+  <div v-else-if="isOpen && inline" class="py-12 px-6">
+    <div class="flex flex-col items-center max-w-sm mx-auto">
+      <!-- 图标 -->
+      <div class="w-20 h-20 rounded-full flex items-center justify-center mb-6" :class="darkMode ? 'bg-gray-700' : 'bg-gray-100'">
+        <IconLockClosed size="xl" :class="darkMode ? 'text-gray-400' : 'text-gray-500'" />
+      </div>
+
+      <!-- 标题和描述 -->
+      <div class="text-center mb-8">
+        <h3 class="text-lg font-semibold mb-1.5" :class="darkMode ? 'text-gray-100' : 'text-gray-900'">
+          {{ title }}
+        </h3>
+        <p v-if="description" class="text-sm" :class="darkMode ? 'text-gray-400' : 'text-gray-600'">
+          {{ description }}
+        </p>
+      </div>
+
+      <!-- 输入区域 -->
+      <div class="w-full mb-6">
+        <div class="relative">
+          <input
+            :id="inputId"
+            ref="inputRef"
+            v-model="inputValue"
+            :type="showPasswordValue ? 'text' : inputType"
+            class="w-full px-4 py-2.5 border rounded-md focus:outline-none focus:ring-2 focus:ring-primary-500 transition-colors"
+            :class="[
+              darkMode ? 'bg-gray-700 border-gray-600 text-white placeholder-gray-500' : 'bg-white border-gray-300 placeholder-gray-400',
+              hasError ? 'border-red-500 focus:ring-red-500' : '',
+              inputType === 'password' ? 'pr-10' : '',
+            ]"
+            :placeholder="placeholder"
+            :disabled="loading"
+            @keyup.enter="handleConfirm"
+            @keyup.escape="handleCancel"
+          />
+          <!-- 显示/隐藏密码按钮 -->
+          <button
+            v-if="inputType === 'password'"
+            type="button"
+            @click="showPasswordValue = !showPasswordValue"
+            class="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
+            :class="darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-500 hover:text-gray-700'"
+            tabindex="-1"
+          >
+            <IconEye v-if="!showPasswordValue" />
+            <IconEyeOff v-else />
+          </button>
+        </div>
+        <!-- 错误提示 -->
+        <p v-if="hasError" class="text-sm mt-2 text-red-500 flex items-center justify-center gap-1">
+          <IconExclamationSolid size="sm" />
+          <span>{{ errorMessage }}</span>
+        </p>
+      </div>
+
+      <!-- 按钮组 -->
+      <div class="flex w-full gap-2">
+        <button
+          @click="handleCancel"
+          :disabled="loading"
+          class="flex-1 px-4 py-2 rounded-md border transition-colors flex items-center justify-center gap-1.5 text-sm font-medium"
+          :class="[darkMode ? 'border-gray-600 text-gray-300 hover:bg-gray-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50', loading ? 'opacity-50 cursor-not-allowed' : '']"
+        >
+          <IconBack size="sm" />
+          <span>{{ displayCancelText }}</span>
+        </button>
+        <button
+          @click="handleConfirm"
+          :disabled="loading || !canConfirm"
+          class="flex-1 px-4 py-2 rounded-md text-white transition-colors flex items-center justify-center gap-1.5 text-sm font-medium"
+          :class="confirmButtonClass"
+        >
+          <!-- 加载状态图标 -->
+          <IconRefresh v-if="loading" class="animate-spin h-4 w-4" aria-hidden="true" />
           <span>{{ loading ? displayLoadingText : displayConfirmText }}</span>
         </button>
       </div>
@@ -64,8 +144,10 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
+import { onKeyStroke } from "@vueuse/core";
+import { IconBack, IconExclamationSolid, IconEye, IconEyeOff, IconLockClosed, IconRefresh } from "@/components/icons";
 
 // 国际化
 const { t } = useI18n();
@@ -137,6 +219,10 @@ const props = defineProps({
     type: Boolean,
     default: true,
   },
+  inline: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const emit = defineEmits(["confirm", "cancel", "close"]);
@@ -145,6 +231,7 @@ const emit = defineEmits(["confirm", "cancel", "close"]);
 const inputRef = ref(null);
 const inputValue = ref("");
 const errorMessage = ref("");
+const showPasswordValue = ref(false);
 
 // 生成唯一的输入框ID
 const inputId = computed(() => `input-dialog-${Math.random().toString(36).substring(2, 11)}`);
@@ -231,14 +318,11 @@ const handleBackdropClick = () => {
   }
 };
 
-// 键盘事件处理
-const handleKeydown = (event) => {
+// 键盘事件：按 ESC 取消
+onKeyStroke("Escape", () => {
   if (!props.isOpen || props.loading) return;
-
-  if (event.key === "Escape") {
-    handleCancel();
-  }
-};
+  handleCancel();
+});
 
 // 监听对话框打开状态
 watch(
@@ -270,12 +354,4 @@ watch(inputValue, () => {
   }
 });
 
-// 生命周期
-onMounted(() => {
-  document.addEventListener("keydown", handleKeydown);
-});
-
-onUnmounted(() => {
-  document.removeEventListener("keydown", handleKeydown);
-});
 </script>

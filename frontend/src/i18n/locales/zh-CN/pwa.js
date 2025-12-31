@@ -1,134 +1,134 @@
 export default {
   pwa: {
-    // ステータスインジケーター
+    // 状态指示器
     status: {
-      title: "PWAステータス詳細",
-      offline: "オフラインモード",
-      updateAvailable: "新しいバージョンあり",
+      title: "PWA 状态详情",
+      offline: "离线模式",
+      updateAvailable: "有新版本",
       updating: "更新中",
-      installable: "インストール可能",
-      ready: "PWA準備完了"
+      installable: "可安装",
+      ready: "PWA 就绪",
     },
 
-    // ステータスラベル
+    // 状态标签
     labels: {
-      networkStatus: "ネットワーク状態",
-      installStatus: "インストール状態",
+      networkStatus: "网络状态",
+      installStatus: "安装状态",
       serviceWorker: "Service Worker",
-      updateStatus: "更新状態",
-      notificationPermission: "通知許可",
-      backgroundSync: "バックグラウンド同期",
-      appVersion: "アプリバージョン"
+      updateStatus: "更新状态",
+      notificationPermission: "通知权限",
+      backgroundSync: "后台同步",
+      appVersion: "应用版本",
     },
 
-    // ネットワーク状態
+    // 网络状态
     network: {
-      online: "オンライン",
-      offline: "オフライン"
+      online: "在线",
+      offline: "离线",
     },
 
-    // インストール状態
+    // 安装状态
     install: {
-      installed: "インストール済み",
-      notInstalled: "未インストール",
-      installable: "インストール可能",
-      installing: "インストール中",
-      installApp: "アプリをインストール",
-      installPrompt: "狼のクリップボードをホーム画面に追加してより良い体験を！"
+      installed: "已安装",
+      notInstalled: "未安装",
+      installable: "可安装",
+      installing: "安装中",
+      installApp: "安装应用",
+      installPrompt: "将 CloudPaste 添加到主屏幕，获得更好的使用体验",
     },
 
-    // Service Worker状態
+    // Service Worker 状态
     serviceWorker: {
-      unknown: "不明",
-      installing: "インストール中",
-      waiting: "待機中",
-      active: "アクティブ",
-      redundant: "不要"
+      unknown: "未知",
+      installing: "安装中",
+      waiting: "等待中",
+      active: "活跃",
+      redundant: "已废弃",
     },
 
-    // 更新状態
+    // 更新状态
     update: {
-      latest: "最新バージョン",
-      available: "更新あり",
+      latest: "最新版本",
+      available: "有更新",
       updating: "更新中",
-      updateApp: "今すぐ更新",
-      checkUpdate: "更新を確認",
-      checking: "確認中",
-      updatePrompt: "新しいバージョンが見つかりました。新機能を入手するには更新してください。",
-      updateSuccess: "更新が完了しました",
-      updateFailed: "更新に失敗しました"
+      updateApp: "立即更新",
+      checkUpdate: "检查更新",
+      checking: "检查中",
+      updatePrompt: "发现新版本，点击更新获得最新功能",
+      updateSuccess: "更新成功",
+      updateFailed: "更新失败",
     },
 
-    // 通知許可
+    // 通知权限
     notification: {
-      default: "未設定",
-      granted: "許可済み",
-      denied: "拒否済み",
-      enable: "通知を有効にする",
-      requesting: "要求中",
-      requestFailed: "通知許可の要求に失敗しました"
+      default: "未设置",
+      granted: "已授权",
+      denied: "已拒绝",
+      enable: "启用通知",
+      requesting: "请求中",
+      requestFailed: "请求通知权限失败",
     },
 
-    // バックグラウンド同期
+    // 后台同步
     backgroundSync: {
-      supported: "サポート済み",
-      notSupported: "サポートされていません",
-      syncing: "同期中",
-      syncComplete: "同期完了",
-      syncFailed: "同期に失敗しました。後でもう一度お試しください"
+      supported: "支持",
+      notSupported: "不支持",
+      syncing: "同步中",
+      syncComplete: "同步完成",
+      syncFailed: "同步失败",
     },
 
-    // オフラインメッセージ
+    // 离线提示
     offline: {
-      message: "オフライン状態です。一部の機能が制限される場合があります",
-      restored: "ネットワークが復帰しました。データの同期を開始しています...",
-      pageUnavailable: "{page}は現在利用できません。ネットワーク接続を確認してください"
+      message: "您已离线，部分功能可能受限",
+      restored: "网络已恢复，正在同步数据...",
+      pageUnavailable: "{page}暂时无法访问，请检查网络连接",
     },
 
-    // インストールプロンプト
+    // 安装提示
     installPrompt: {
-      title: "アプリのインストール",
-      message: "狼のクリップボードをホーム画面に追加してより良い体験を！",
-      install: "インストール",
-      later: "後で",
-      dismiss: "閉じる"
+      title: "安装应用",
+      message: "将 CloudPaste 添加到主屏幕，获得更好的使用体验",
+      install: "安装",
+      later: "稍后",
+      dismiss: "稍后",
     },
 
-    // アップデートプロンプト
+    // 更新提示
     updatePrompt: {
-      title: "新しいバージョンが利用可能です",
-      message: "新しいバージョンが見つかりました。新機能を入手するには更新してください。",
+      title: "新版本可用",
+      message: "发现新版本，点击更新获得最新功能",
       update: "更新",
-      later: "後で",
-      dismiss: "閉じる"
+      later: "稍后",
+      dismiss: "稍后",
     },
 
-    // 操作ボタン
+    // 操作按钮
     actions: {
-      install: "インストール",
+      install: "安装",
       update: "更新",
-      checkUpdate: "更新を確認",
-      enableNotification: "通知を有効にする",
-      close: "閉じる",
-      later: "後で",
-      dismiss: "閉じる"
+      checkUpdate: "检查更新",
+      enableNotification: "启用通知",
+      close: "关闭",
+      later: "稍后",
+      dismiss: "稍后",
     },
 
-    // エラーメッセージ
+    // 错误消息
     errors: {
-      installFailed: "インストールに失敗しました",
-      updateFailed: "更新に失敗しました",
-      notificationFailed: "通知許可の要求に失敗しました",
-      syncFailed: "データ同期に失敗しました。後でもう一度お試しください",
-      notSupported: "お使いのブラウザではこの機能はサポートされていません"
+      installFailed: "安装失败",
+      updateFailed: "更新失败",
+      notificationFailed: "通知权限请求失败",
+      syncFailed: "数据同步失败，请稍后重试",
+      notSupported: "您的浏览器不支持此功能",
     },
 
-    // 成功メッセージ
+    // 成功消息
     success: {
-      installed: "アプリが正常にインストールされました",
-      updated: "アプリが最新バージョンに更新されました",
-      notificationEnabled: "通知許可が有効になりました",
-      syncComplete: "データ同期が完了しました"
-    }
-  }
+      installed: "应用已成功安装",
+      updated: "应用已更新到最新版本",
+      notificationEnabled: "通知权限已启用",
+      syncComplete: "数据同步完成",
+    },
+  },
 };

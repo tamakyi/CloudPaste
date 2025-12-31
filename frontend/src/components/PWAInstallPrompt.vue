@@ -1,9 +1,10 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from "vue";
+import { useIntervalFn, useLocalStorage } from "@vueuse/core";
 import { useI18n } from "vue-i18n";
-import { pwaUtils } from "@/pwa/pwaManager.js";
+import { IconClose, IconComputerDesktop, IconExclamation, IconRefresh } from "@/components/icons";
 
-// 🎯 国际化支持
+// 国际化支持
 const { t } = useI18n();
 
 const props = defineProps({
@@ -19,19 +20,26 @@ const showUpdatePrompt = ref(false);
 const isInstalling = ref(false);
 const isUpdating = ref(false);
 
+// 性能优化：PWA 管理器较大，避免首屏就同步引入。
+const pwaUtilsRef = ref(null);
+
 // 计算属性
-const pwaState = pwaUtils.state;
-const canInstall = computed(() => pwaState.isInstallable && !pwaState.isInstalled);
-const hasUpdate = computed(() => pwaState.isUpdateAvailable);
-const isOffline = computed(() => pwaState.isOffline);
+const pwaState = computed(() => pwaUtilsRef.value?.state || {});
+const canInstall = computed(() => Boolean(pwaState.value.isInstallable && !pwaState.value.isInstalled));
+const hasUpdate = computed(() => Boolean(pwaState.value.isUpdateAvailable));
+const isOffline = computed(() => Boolean(pwaState.value.isOffline));
+
+// 记住用户选择：安装提示“暂不显示”的时间戳
+const dismissedAtMs = useLocalStorage("pwa-install-dismissed", 0);
 
 // 安装应用
 const installApp = async () => {
   if (isInstalling.value) return;
+  if (!pwaUtilsRef.value) return;
 
   isInstalling.value = true;
   try {
-    const success = await pwaUtils.install();
+    const success = await pwaUtilsRef.value.install();
     if (success) {
       showInstallPrompt.value = false;
     }
@@ -45,15 +53,16 @@ const installApp = async () => {
 // 更新应用
 const updateApp = async () => {
   if (isUpdating.value) return;
+  if (!pwaUtilsRef.value) return;
 
   isUpdating.value = true;
   try {
-    const success = await pwaUtils.update();
+    const success = await pwaUtilsRef.value.update();
     if (success) {
       showUpdatePrompt.value = false;
       // 等待一下然后刷新页面
       setTimeout(() => {
-        pwaUtils.reloadApp();
+        pwaUtilsRef.value?.reloadApp?.();
       }, 1000);
     }
   } catch (error) {
@@ -67,7 +76,7 @@ const updateApp = async () => {
 const dismissInstallPrompt = () => {
   showInstallPrompt.value = false;
   // 记住用户选择，一段时间内不再显示
-  localStorage.setItem("pwa-install-dismissed", Date.now().toString());
+  dismissedAtMs.value = Date.now();
 };
 
 // 关闭更新提示
@@ -77,20 +86,56 @@ const dismissUpdatePrompt = () => {
 
 // 检查是否应该显示安装提示
 const checkInstallPrompt = () => {
-  const dismissed = localStorage.getItem("pwa-install-dismissed");
-  const dismissedTime = dismissed ? parseInt(dismissed) : 0;
+  const dismissedTime = typeof dismissedAtMs.value === "number" ? dismissedAtMs.value : parseInt(String(dismissedAtMs.value || 0));
   const daysSinceDismissed = (Date.now() - dismissedTime) / (1000 * 60 * 60 * 24);
 
   // 如果超过7天或从未拒绝过，则显示提示
-  if (canInstall.value && (!dismissed || daysSinceDismissed > 7)) {
+  if (canInstall.value && (!dismissedTime || daysSinceDismissed > 7)) {
     showInstallPrompt.value = true;
   }
 };
 
 // 监听PWA状态变化
-let stateWatcher;
+const { pause: stopStateWatcher, resume: startStateWatcher } = useIntervalFn(
+  () => {
+    if (canInstall.value && !showInstallPrompt.value) {
+      checkInstallPrompt();
+    }
+    if (hasUpdate.value && !showUpdatePrompt.value) {
+      showUpdatePrompt.value = true;
+    }
+  },
+  5000,
+  { immediate: false }
+);
 
 onMounted(() => {
+  // 延迟加载 PWA 管理器
+  const scheduleIdle = (fn) => {
+    if (typeof window === "undefined") return;
+    if (typeof window.requestIdleCallback === "function") {
+      window.requestIdleCallback(() => fn(), { timeout: 1500 });
+      return;
+    }
+    setTimeout(fn, 800);
+  };
+
+  scheduleIdle(async () => {
+    try {
+      const mod = await import("@/pwa/pwaManager.js");
+      pwaUtilsRef.value = mod?.pwaUtils || null;
+
+      // PWA 工具到位后，立刻补一次检查
+      checkInstallPrompt();
+      if (hasUpdate.value) {
+        showUpdatePrompt.value = true;
+      }
+    } catch (e) {
+      console.warn("[PWA] pwaManager 延迟加载失败（不影响页面使用）:", e);
+      pwaUtilsRef.value = null;
+    }
+  });
+
   // 检查安装提示
   checkInstallPrompt();
 
@@ -100,20 +145,11 @@ onMounted(() => {
   }
 
   // 设置状态监听器
-  stateWatcher = setInterval(() => {
-    if (canInstall.value && !showInstallPrompt.value) {
-      checkInstallPrompt();
-    }
-    if (hasUpdate.value && !showUpdatePrompt.value) {
-      showUpdatePrompt.value = true;
-    }
-  }, 5000);
+  startStateWatcher();
 });
 
 onUnmounted(() => {
-  if (stateWatcher) {
-    clearInterval(stateWatcher);
-  }
+  stopStateWatcher();
 });
 </script>
 
@@ -126,14 +162,7 @@ onUnmounted(() => {
         :class="['fixed bottom-20 right-4 z-50 px-2 py-1 rounded-full shadow-lg text-xs font-medium', darkMode ? 'bg-yellow-800 text-yellow-200' : 'bg-yellow-500 text-white']"
       >
         <div class="flex items-center space-x-1">
-          <svg class="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              stroke-width="2"
-              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"
-            />
-          </svg>
+          <IconExclamation size="xs" class="flex-shrink-0" />
           <span class="whitespace-nowrap">{{ t("pwa.status.offline") }}</span>
         </div>
       </div>
@@ -150,9 +179,7 @@ onUnmounted(() => {
       >
         <div class="flex items-start space-x-3">
           <div :class="['flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center', darkMode ? 'bg-blue-900' : 'bg-blue-100']">
-            <svg :class="['w-6 h-6', darkMode ? 'text-blue-400' : 'text-blue-600']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
-            </svg>
+            <IconComputerDesktop size="lg" :class="darkMode ? 'text-blue-400' : 'text-blue-600'" />
           </div>
           <div class="flex-1 min-w-0">
             <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">{{ t("pwa.installPrompt.title") }}</h3>
@@ -168,14 +195,7 @@ onUnmounted(() => {
               >
                 <span v-if="!isInstalling">{{ t("pwa.actions.install") }}</span>
                 <span v-else class="flex items-center space-x-1">
-                  <svg class="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
+                  <IconRefresh class="animate-spin w-3 h-3" aria-hidden="true" />
                   <span>{{ t("pwa.install.installing") }}</span>
                 </span>
               </button>
@@ -194,9 +214,7 @@ onUnmounted(() => {
             @click="dismissInstallPrompt"
             :class="['flex-shrink-0 p-1 rounded-md transition-colors', darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600']"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <IconClose size="sm" />
           </button>
         </div>
       </div>
@@ -213,14 +231,7 @@ onUnmounted(() => {
       >
         <div class="flex items-start space-x-3">
           <div :class="['flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center', darkMode ? 'bg-green-900' : 'bg-green-100']">
-            <svg :class="['w-6 h-6', darkMode ? 'text-green-400' : 'text-green-600']" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                stroke-width="2"
-                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-              />
-            </svg>
+            <IconRefresh size="lg" :class="darkMode ? 'text-green-400' : 'text-green-600'" />
           </div>
           <div class="flex-1 min-w-0">
             <h3 :class="['text-sm font-medium', darkMode ? 'text-white' : 'text-gray-900']">{{ t("pwa.updatePrompt.title") }}</h3>
@@ -236,14 +247,7 @@ onUnmounted(() => {
               >
                 <span v-if="!isUpdating">{{ t("pwa.update.updateApp") }}</span>
                 <span v-else class="flex items-center space-x-1">
-                  <svg class="animate-spin w-3 h-3" fill="none" viewBox="0 0 24 24">
-                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                    <path
-                      class="opacity-75"
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                    ></path>
-                  </svg>
+                  <IconRefresh class="animate-spin w-3 h-3" aria-hidden="true" />
                   <span>{{ t("pwa.update.updating") }}</span>
                 </span>
               </button>
@@ -262,9 +266,7 @@ onUnmounted(() => {
             @click="dismissUpdatePrompt"
             :class="['flex-shrink-0 p-1 rounded-md transition-colors', darkMode ? 'text-gray-400 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600']"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-            </svg>
+            <IconClose size="sm" />
           </button>
         </div>
       </div>

@@ -3,8 +3,7 @@
  */
 
 import { get, post, del } from "../client";
-import { API_BASE_URL } from "../config";
-import { S3MultipartUploader } from "./S3MultipartUploader.js";
+// Legacy StorageMultipartUploader removed. Multipart flows are handled by Uppy AwsS3 plugin or driver engine.
 
 /******************************************************************************
  * 统一文件系统API函数
@@ -15,6 +14,7 @@ import { S3MultipartUploader } from "./S3MultipartUploader.js";
  * @param {string} path 请求路径
  * @param {Object} options 选项参数
  * @param {boolean} options.refresh 是否强制刷新，跳过缓存
+ * @param {AbortSignal} options.signal 用于取消请求的 AbortSignal
  * @returns {Promise<Object>} 目录列表响应对象
  */
 export async function getDirectoryList(path, options = {}) {
@@ -22,16 +22,46 @@ export async function getDirectoryList(path, options = {}) {
   if (options.refresh) {
     params.refresh = "true";
   }
-  return get("/fs/list", { params });
+  if (options.cursor) {
+    params.cursor = String(options.cursor);
+  }
+  if (options.limit) {
+    params.limit = String(options.limit);
+  }
+  // 允许前端显式指定是否启用分页模式
+  if (options.paged) {
+    params.paged = "true";
+  }
+  const requestOptions = { params };
+  if (options.headers) {
+    requestOptions.headers = options.headers;
+  }
+  // 支持请求取消
+  if (options.signal) {
+    requestOptions.signal = options.signal;
+  }
+  return get("/fs/list", requestOptions);
 }
 
 /**
  * 获取文件信息
  * @param {string} path 文件路径
+ * @param {{ headers?: Record<string,string>, signal?: AbortSignal }} [options] 可选请求配置（如路径密码token、取消信号等）
  * @returns {Promise<Object>} 文件信息响应对象
  */
-export async function getFileInfo(path) {
-  return get("/fs/get", { params: { path } });
+export async function getFileInfo(path, options = {}) {
+  /** @type {{ params: Record<string,string>, headers?: Record<string,string>, signal?: AbortSignal }} */
+  const requestOptions = {
+    params: { path },
+  };
+  if (options.headers) {
+    requestOptions.headers = options.headers;
+  }
+  // 支持请求取消
+  if (options.signal) {
+    requestOptions.signal = options.signal;
+  }
+  return get("/fs/get", requestOptions);
 }
 
 /**
@@ -42,7 +72,9 @@ export async function getFileInfo(path) {
  * @param {string} searchParams.mountId 挂载点ID（当scope为'mount'时）
  * @param {string} searchParams.path 搜索路径（当scope为'directory'时）
  * @param {number} searchParams.limit 结果限制数量，默认50
- * @param {number} searchParams.offset 结果偏移量，默认0
+ * @param {string|null} searchParams.cursor 分页游标（不透明字符串），默认null
+ * @param {string} searchParams.pathToken 路径密码 token（可选）
+ * @param {string[]} searchParams.pathTokens 路径密码 token 列表（可选）
  * @returns {Promise<Object>} 搜索结果响应对象
  */
 export async function searchFiles(query, searchParams = {}) {
@@ -50,7 +82,6 @@ export async function searchFiles(query, searchParams = {}) {
     q: query,
     scope: searchParams.scope || "global",
     limit: (searchParams.limit || 50).toString(),
-    offset: (searchParams.offset || 0).toString(),
   };
 
   // 添加可选参数
@@ -60,17 +91,24 @@ export async function searchFiles(query, searchParams = {}) {
   if (searchParams.path) {
     params.path = searchParams.path;
   }
+  if (searchParams.cursor) {
+    params.cursor = String(searchParams.cursor);
+  }
 
-  return get("/fs/search", { params });
-}
+  const headers = {};
+  if (searchParams.pathToken) {
+    headers["x-fs-path-token"] = searchParams.pathToken;
+  }
+  if (Array.isArray(searchParams.pathTokens) && searchParams.pathTokens.length > 0) {
+    headers["x-fs-path-tokens"] = searchParams.pathTokens.join(",");
+  }
 
-/**
- * 下载文件
- * @param {string} path 文件路径
- * @returns {string} 文件下载URL
- */
-export function getFileDownloadUrl(path) {
-  return `${API_BASE_URL}/api/fs/download?path=${encodeURIComponent(path)}`;
+  const requestOptions = { params };
+  if (Object.keys(headers).length > 0) {
+    requestOptions.headers = headers;
+  }
+
+  return get("/fs/search", requestOptions);
 }
 
 /**
@@ -83,18 +121,16 @@ export async function createDirectory(path) {
 }
 
 /**
- * 上传文件
+ * 上传文件（通过 /fs/upload，后端根据存储驱动自适应选择流式/表单实现）
  * @param {string} path 目标路径
  * @param {File} file 文件对象
- * @param {boolean} useMultipart 是否使用服务器分片上传，默认为true
  * @param {Function} onXhrCreated XHR创建后的回调，用于保存引用以便取消请求
  * @returns {Promise<Object>} 上传结果响应对象
  */
-export async function uploadFile(path, file, useMultipart = true, onXhrCreated) {
+export async function uploadFile(path, file, onXhrCreated) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("path", path);
-  formData.append("use_multipart", useMultipart.toString());
 
   return post(`/fs/upload`, formData, { onXhrCreated });
 }
@@ -136,11 +172,12 @@ export async function updateFile(path, content) {
 /**
  * 获取文件直链
  * @param {string} path 文件路径
- * @param {number|null} expiresIn 过期时间（秒），null表示使用S3配置的默认签名时间
+ * @param {number|null} expiresIn 过期时间（秒），null表示使用存储配置的默认签名时间
  * @param {boolean} forceDownload 是否强制下载而非预览
- * @returns {Promise<Object>} 包含预签名URL的响应对象
+ * @param {{ headers?: Record<string,string> }} [options] 可选请求配置（例如路径密码 token）
+ * @returns {Promise<string>} 预签名访问 URL（可能是直链或代理 URL）
  */
-export async function getFileLink(path, expiresIn = null, forceDownload = false) {
+export async function getFileLink(path, expiresIn = null, forceDownload = false, options = {}) {
   const params = {
     path: path,
     force_download: forceDownload.toString(),
@@ -151,7 +188,37 @@ export async function getFileLink(path, expiresIn = null, forceDownload = false)
     params.expires_in = expiresIn.toString();
   }
 
-  return get("/fs/file-link", { params });
+  /** @type {{ params: Record<string,string>, headers?: Record<string,string> }} */
+  const requestOptions = { params };
+  if (options.headers) {
+    requestOptions.headers = options.headers;
+  }
+
+  const resp = await get("/fs/file-link", requestOptions);
+  if (!resp || resp.success === false) {
+    throw new Error(resp?.message || "获取文件直链失败");
+  }
+  const url = resp?.data?.url;
+  if (!url) {
+    throw new Error(resp?.message || "获取文件直链失败");
+  }
+  return url;
+}
+
+/**
+ * 校验目录路径密码
+ * @param {string} path 目标路径
+ * @param {string} password 明文密码
+ * @returns {Promise<{ success: boolean; requiresPassword: boolean; verified: boolean; token?: string | null; path?: string }>}
+ */
+export async function verifyPathPassword(path, password) {
+  const response = await post("/fs/meta/password/verify", { path, password });
+  if (response && typeof response === "object" && "data" in response) {
+    return /** @type {{ verified: boolean; requiresPassword: boolean; token?: string | null; path?: string }} */ (
+      response.data
+    );
+  }
+  return response;
 }
 
 /******************************************************************************
@@ -167,8 +234,10 @@ export async function getFileLink(path, expiresIn = null, forceDownload = false)
  * @param {number} partSize 分片大小（默认5MB）
  * @returns {Promise<Object>} 初始化结果响应对象
  */
-export async function initMultipartUpload(path, fileName, fileSize, contentType, partSize = 5 * 1024 * 1024) {
+export async function initMultipartUpload(path, fileName, fileSize, contentType, partSize = 5 * 1024 * 1024, extra = {}) {
   const partCount = Math.ceil(fileSize / partSize);
+
+  const sha256 = extra?.sha256 || extra?.oid || null;
 
   return post(`/fs/multipart/init`, {
     path,
@@ -176,6 +245,8 @@ export async function initMultipartUpload(path, fileName, fileSize, contentType,
     fileSize,
     partSize,
     partCount,
+    ...(contentType ? { contentType } : {}),
+    ...(sha256 ? { sha256 } : {}),
   });
 }
 
@@ -232,14 +303,14 @@ export async function listMultipartParts(path, uploadId, fileName) {
 }
 
 /**
- * 为现有上传刷新预签名URL
+ * 获取/刷新分片上传参数（统一入口）
  * @param {string} path 文件路径
  * @param {string} uploadId 现有的上传ID
- * @param {Array} partNumbers 需要刷新URL的分片编号数组
- * @returns {Promise<Object>} 刷新的预签名URL列表响应对象
+ * @param {Array} partNumbers 需要签名的分片编号数组：
+ * @returns {Promise<Object>} 分片上传参数响应对象
  */
-export async function refreshMultipartUrls(path, uploadId, partNumbers) {
-  return post(`/fs/multipart/refresh-urls`, { path, uploadId, partNumbers });
+export async function signMultipartParts(path, uploadId, partNumbers) {
+  return post(`/fs/multipart/sign-parts`, { path, uploadId, partNumbers });
 }
 
 /******************************************************************************
@@ -252,14 +323,16 @@ export async function refreshMultipartUrls(path, uploadId, partNumbers) {
  * @param {string} fileName 文件名
  * @param {string} contentType 文件类型
  * @param {number} fileSize 文件大小
+ * @param {string} [sha256] 文件 SHA-256（hex）。
  * @returns {Promise<Object>} 预签名URL响应对象
  */
-export async function getPresignedUploadUrl(path, fileName, contentType, fileSize) {
+export async function getPresignedUploadUrl(path, fileName, contentType, fileSize, sha256 = null) {
   return post(`/fs/presign`, {
     path,
     fileName,
     contentType,
     fileSize,
+    sha256,
   });
 }
 
@@ -285,45 +358,19 @@ export async function commitPresignedUpload(uploadInfo, etag, contentType, fileS
  ******************************************************************************/
 
 /**
- * 批量复制文件或目录
+ * 批量复制文件或目录（统一任务模式）
+ *
+ * 所有复制操作统一创建任务，由后端 CopyTaskHandler 负责执行。
+ * 复制策略（同存储/跨存储/S3优化）由后端内部决策。
+ *
  * @param {Array<{sourcePath: string, targetPath: string}>} items 要复制的项目数组，每项包含源路径和目标路径
- * @param {boolean} skipExisting 是否跳过已存在的文件，默认为true
- * @param {Object} options 额外选项
- * @param {Function} [options.onProgress] 进度回调函数
- * @param {Function} [options.onCancel] 取消检查函数
- * @returns {Promise<Object>} 批量复制结果响应对象
+ * @param {Object} options 选项参数
+ * @param {boolean} [options.skipExisting=true] 是否跳过已存在的文件
+ * @returns {Promise<Object>} 批量复制结果响应对象 { success, data: { jobId, taskType, status, stats, createdAt } }
  */
-export async function batchCopyItems(items, skipExisting = true, options = {}) {
-  const { onProgress, onCancel } = options;
-
-  // 首先调用服务器批量复制API
-  const result = await post(`/fs/batch-copy`, { items, skipExisting });
-
-  // 检查是否需要客户端处理的跨存储复制
-  if (result.success && result.data && result.data.requiresClientSideCopy) {
-    console.log("检测到需要客户端处理的批量跨存储复制", result.data);
-
-    // 执行客户端复制流程
-    return performClientSideCopy({
-      copyResult: result.data,
-      onProgress,
-      onCancel,
-    });
-  }
-
-  // 正常的服务器端复制，直接返回结果
-  return result;
-}
-
-/**
- * 提交批量复制完成
- * @param {Object} data 批量复制完成数据
- * @param {string} data.targetMountId 目标挂载点ID
- * @param {Array<Object>} data.files 文件列表，每个对象包含 {targetPath, s3Path, contentType?, fileSize?, etag?}
- * @returns {Promise<Object>} 提交结果响应对象
- */
-export async function commitBatchCopy(data) {
-  return post(`/fs/batch-copy-commit`, data);
+export async function batchCopyItems(items, options = {}) {
+  // 复制策略由后端 CopyTaskHandler 内部决策
+  return createJob("copy", { items, options });
 }
 
 /**
@@ -333,50 +380,6 @@ export async function commitBatchCopy(data) {
  */
 export async function createShareFromFileSystem(path) {
   return post(`/fs/create-share`, { path });
-}
-
-/**
- * 复制文件或目录
- * @param {string} sourcePath 源路径
- * @param {string} targetPath 目标路径
- * @param {boolean} skipExisting 是否跳过已存在的文件，默认为true
- * @param {Object} options 额外选项
- * @param {Function} [options.onProgress] 进度回调函数
- * @param {Function} [options.onCancel] 取消检查函数
- * @returns {Promise<Object>} 复制结果响应对象
- */
-export async function copyItem(sourcePath, targetPath, skipExisting = true, options = {}) {
-  // 将单文件复制转换为批量复制格式
-  const items = [{ sourcePath, targetPath }];
-  return batchCopyItems(items, skipExisting, options);
-}
-
-/**
- * 提交复制完成信息
- * @param {Object} data 复制完成数据
- * @param {string} data.sourcePath 源文件路径
- * @param {string} data.targetPath 目标文件路径
- * @param {string} data.targetMountId 目标挂载点ID
- * @param {string} data.s3Path S3存储路径
- * @param {string} [data.etag] 文件ETag（可选）
- * @param {string} [data.contentType] 文件MIME类型（可选）
- * @param {number} [data.fileSize] 文件大小（字节）（可选）
- * @returns {Promise<Object>} 提交结果响应对象
- */
-export async function commitCopy(data) {
-  // 将单文件提交转换为批量提交格式
-  return commitBatchCopy({
-    targetMountId: data.targetMountId,
-    files: [
-      {
-        targetPath: data.targetPath,
-        s3Path: data.s3Path,
-        contentType: data.contentType,
-        fileSize: data.fileSize,
-        etag: data.etag,
-      },
-    ],
-  });
 }
 
 /******************************************************************************
@@ -413,7 +416,7 @@ export async function uploadWithPresignedUrl(url, data, contentType, onProgress,
 
     xhr.onload = function () {
       if (cancelChecker) {
-        clearInterval(cancelChecker);
+        clearTimeout(cancelChecker);
       }
 
       if (xhr.status === 200) {
@@ -429,14 +432,14 @@ export async function uploadWithPresignedUrl(url, data, contentType, onProgress,
 
     xhr.onerror = function () {
       if (cancelChecker) {
-        clearInterval(cancelChecker);
+        clearTimeout(cancelChecker);
       }
       reject(new Error("上传过程中发生网络错误"));
     };
 
     xhr.onabort = function () {
       if (cancelChecker) {
-        clearInterval(cancelChecker);
+        clearTimeout(cancelChecker);
       }
       reject(new Error("上传已取消"));
     };
@@ -444,14 +447,18 @@ export async function uploadWithPresignedUrl(url, data, contentType, onProgress,
     // 定期检查取消状态
     let cancelChecker = null;
     if (onCancel) {
-      cancelChecker = setInterval(() => {
+      const checkCancel = () => {
         if (onCancel()) {
           if (cancelChecker) {
-            clearInterval(cancelChecker);
+            clearTimeout(cancelChecker);
+            cancelChecker = null;
           }
           xhr.abort();
+          return;
         }
-      }, 100);
+        cancelChecker = setTimeout(checkCancel, 100);
+      };
+      cancelChecker = setTimeout(checkCancel, 100);
     }
 
     // 开始上传
@@ -553,540 +560,115 @@ export async function uploadToPresignedUrl(options) {
   return uploadWithPresignedUrl(url, data, contentType, onProgress, onCancel, setXhr);
 }
 
-/**
- * 执行客户端复制流程
- * @param {Object} options 复制选项
- * @param {Object} options.copyResult 初始复制请求的结果，包含下载URL和上传URL等信息
- * @param {Function} [options.onProgress] 进度回调，参数为(phase, progress)，phase可能是"downloading"或"uploading"
- * @param {Function} [options.onCancel] 取消检查函数，返回true时中止操作
- * @returns {Promise<Object>} 复制结果
- */
-export async function performClientSideCopy(options) {
-  const { copyResult, onProgress, onCancel } = options;
 
-  console.log(`开始客户端复制流程`, copyResult);
 
-  // 设置下载和上传的XHR引用，用于可能的取消操作
-  let downloadXhr = null;
-  let uploadXhr = null;
-
-  try {
-    // 检查是否为单文件复制
-    if (!copyResult.crossStorageResults || copyResult.crossStorageResults.length === 0) {
-      throw new Error("没有找到跨存储复制项目");
-    }
-
-    // 处理目录复制：如果有目录复制项目且包含 items 数组，需要展开处理
-    let allCopyItems = [];
-    let targetMountId = null;
-
-    for (const result of copyResult.crossStorageResults) {
-      // 检查是否为跳过的项目
-      if (result.status === "skipped" || result.skipped === true) {
-        console.log(`[客户端复制] 跳过已存在的文件: ${result.source} -> ${result.target}`);
-        continue; // 跳过已存在的文件，不添加到复制列表
-      }
-
-      if (result.isDirectory && result.items && result.items.length > 0) {
-        // 目录复制：将 items 数组中的文件添加到复制列表，并添加必要的元数据
-        const itemsWithMetadata = result.items.map((item) => {
-          // 正确构建目标路径，避免重复斜杠
-          let targetPath = result.target;
-
-          // 确保 targetPath 以斜杠结尾
-          if (!targetPath.endsWith("/")) {
-            targetPath += "/";
-          }
-
-          // 添加相对目录路径（如果存在）
-          if (item.relativeDir) {
-            targetPath += item.relativeDir + "/";
-          }
-
-          // 添加文件名
-          targetPath += item.fileName;
-
-          return {
-            ...item,
-            targetMount: result.targetMount,
-            targetPath: targetPath,
-          };
-        });
-        allCopyItems.push(...itemsWithMetadata);
-
-        // 记录目标挂载点ID
-        if (!targetMountId) {
-          targetMountId = result.targetMount;
-        }
-      } else if (!result.isDirectory) {
-        // 文件复制
-        const fileItem = {
-          ...result,
-          targetPath: result.target,
-        };
-        allCopyItems.push(fileItem);
-
-        // 记录目标挂载点ID
-        if (!targetMountId) {
-          targetMountId = result.targetMount;
-        }
-      }
-    }
-
-    // 统计跳过的文件数量
-    const skippedCount = copyResult.crossStorageResults.filter((result) => result.status === "skipped" || result.skipped === true).length;
-
-    if (allCopyItems.length === 0) {
-      // 如果所有文件都被跳过
-      if (skippedCount > 0) {
-        return {
-          success: true,
-          message: "FILE_COPY_SUCCESS",
-          data: {
-            crossStorage: true, // 标记为跨存储复制
-            skipped: skippedCount,
-            success: 0,
-            failed: 0,
-          },
-        };
-      }
-      throw new Error("没有找到需要复制的文件");
-    }
-
-    // 处理单文件复制
-    if (allCopyItems.length === 1) {
-      const singleFileCopy = allCopyItems[0];
-
-      // 下载源文件
-      console.log(`下载源文件: ${singleFileCopy.sourceS3Path || singleFileCopy.sourceKey}`);
-      const fileContent = await fetchFileContent({
-        url: singleFileCopy.downloadUrl,
-        onProgress: (progress, loaded, total) => {
-          if (onProgress) {
-            onProgress("downloading", progress, {
-              loaded,
-              total,
-              percentage: progress,
-            });
-          }
-        },
-        onCancel,
-        setXhr: (xhr) => {
-          downloadXhr = xhr;
-        },
-      });
-
-      // 检查是否被取消
-      if (onCancel && onCancel()) {
-        throw new Error("操作已取消");
-      }
-
-      // 上传文件内容到目标位置
-      console.log(`上传到目标位置: ${singleFileCopy.targetS3Path || singleFileCopy.targetKey}`);
-      const uploadResult = await uploadToPresignedUrl({
-        url: singleFileCopy.uploadUrl,
-        data: fileContent,
-        contentType: singleFileCopy.contentType || "application/octet-stream",
-        onProgress: (progress, loaded, total) => {
-          if (onProgress) {
-            onProgress("uploading", progress, {
-              loaded,
-              total,
-              percentage: progress,
-            });
-          }
-        },
-        onCancel,
-        setXhr: (xhr) => {
-          uploadXhr = xhr;
-        },
-      });
-
-      // 提交复制完成信息
-      const commitResult = await commitBatchCopy({
-        targetMountId: targetMountId,
-        files: [
-          {
-            targetPath: singleFileCopy.targetPath,
-            s3Path: singleFileCopy.targetS3Path || singleFileCopy.targetKey,
-            contentType: singleFileCopy.contentType,
-            fileSize: fileContent.byteLength,
-            etag: uploadResult.etag,
-          },
-        ],
-      });
-
-      return {
-        success: true,
-        message: "FILE_COPY_SUCCESS",
-        data: {
-          ...commitResult.data,
-          crossStorage: true, // 标记为跨存储复制
-        },
-      };
-    }
-
-    // 处理批量文件复制
-    const totalItems = allCopyItems.length;
-    let completedItems = 0;
-    const completedFiles = [];
-
-    for (const item of allCopyItems) {
-      // 检查是否被取消
-      if (onCancel && onCancel()) {
-        throw new Error("操作已取消");
-      }
-
-      // 下载源文件
-      console.log(`下载源文件: ${item.sourceS3Path || item.sourceKey}`);
-      const fileContent = await fetchFileContent({
-        url: item.downloadUrl,
-        onProgress: (progress) => {
-          if (onProgress) {
-            const itemProgress = (completedItems / totalItems) * 100;
-            onProgress("downloading", progress, {
-              currentFile: item.fileName || item.sourceKey,
-              currentFileProgress: progress,
-              totalProgress: itemProgress + progress / totalItems / 2,
-              processedFiles: completedItems,
-              totalFiles: totalItems,
-              percentage: Math.round(itemProgress + progress / totalItems / 2),
-            });
-          }
-        },
-        setXhr: (xhr) => {
-          downloadXhr = xhr;
-        },
-      });
-
-      // 检查是否被取消
-      if (onCancel && onCancel()) {
-        throw new Error("操作已取消");
-      }
-
-      // 上传文件内容
-      console.log(`上传到目标位置: ${item.targetS3Path || item.targetKey}`);
-      const uploadResult = await uploadToPresignedUrl({
-        url: item.uploadUrl,
-        data: fileContent,
-        contentType: item.contentType || "application/octet-stream",
-        onProgress: (progress) => {
-          if (onProgress) {
-            const itemProgress = (completedItems / totalItems) * 100;
-            onProgress("uploading", progress, {
-              currentFile: item.fileName || item.sourceKey,
-              currentFileProgress: progress,
-              totalProgress: itemProgress + (50 + progress) / totalItems / 2,
-              processedFiles: completedItems,
-              totalFiles: totalItems,
-              percentage: Math.round(itemProgress + (50 + progress) / totalItems / 2),
-            });
-          }
-        },
-        setXhr: (xhr) => {
-          uploadXhr = xhr;
-        },
-      });
-
-      // 记录完成的文件
-      completedFiles.push({
-        targetPath: item.targetPath,
-        s3Path: item.targetS3Path || item.targetKey,
-        contentType: item.contentType,
-        fileSize: fileContent.byteLength,
-        etag: uploadResult.etag,
-      });
-
-      completedItems++;
-    }
-
-    // 提交批量复制完成信息
-    const commitResult = await commitBatchCopy({
-      targetMountId: targetMountId,
-      files: completedFiles,
-    });
-
-    return {
-      success: true,
-      message: "FILE_COPY_SUCCESS",
-      data: {
-        ...commitResult.data,
-        crossStorage: true, // 标记为跨存储复制
-        skipped: skippedCount,
-        success: completedItems,
-        failed: 0,
-      },
-    };
-  } catch (error) {
-    // 如果有正在进行的请求，尝试取消它们
-    if (downloadXhr) {
-      downloadXhr.abort();
-    }
-    if (uploadXhr) {
-      uploadXhr.abort();
-    }
-
-    console.error("客户端复制流程失败:", error);
-    throw error;
-  }
-}
 
 /******************************************************************************
- * 高级功能API函数
+ * 通用作业（Generic Jobs）API函数
  ******************************************************************************/
 
 /**
- * 执行分片上传的完整流程
- * @param {File} file 要上传的文件
- * @param {string} path 目标路径
- * @param {Function} onProgress 进度回调函数，参数为(progress, loaded, total)
- * @param {Function} onCancel 取消检查函数，返回true时中止上传
- * @param {Function} onXhrCreated XHR创建后的回调，用于保存引用以便取消请求
- * @returns {Promise<Object>} 上传结果
+ * 创建通用作业（支持多种任务类型的异步后台处理）
+ * @param {string} taskType 任务类型（'copy', 'scheduled-sync', 'cleanup' 等）
+ * @param {Object} payload 任务载荷（由具体任务类型决定）
+ * @param {Object} options 选项参数
+ * @param {boolean} [options.skipExisting=true] 是否跳过已存在的文件（适用于复制任务）
+ * @param {number} [options.maxConcurrency=10] 最大并发数
+ * @param {Object} [options.retryPolicy] 重试策略
+ * @returns {Promise<Object>} 作业描述符 { jobId, taskType, status, stats, createdAt }
  */
-export async function performMultipartUpload(file, path, onProgress, onCancel, onXhrCreated) {
-  const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB per chunk
+export async function createJob(taskType, payload, options = {}) {
+  const type = String(taskType || "").trim();
+  if (!type) {
+    throw new Error("taskType 不能为空");
+  }
 
-  let uploadId = null;
-  let multipartUploader = null;
-  let existingUpload = null;
+  if (type === "copy") {
+    const items = Array.isArray(payload) ? payload : (payload?.items ?? payload);
+    const payloadOptions = (!Array.isArray(payload) && payload && typeof payload === "object")
+      ? (payload.options || {})
+      : {};
+    const mergedOptions = { ...payloadOptions, ...options };
 
-  try {
-    console.log(`开始分片上传: 文件=${file.name}, 大小=${file.size}, 路径=${path}`);
-
-    // 1. 检查是否有进行中的上传（AWS S3标准流程）
-    console.log("检查进行中的分片上传...");
-    const uploadsResponse = await listMultipartUploads(path);
-
-    if (uploadsResponse.success && uploadsResponse.data.uploads) {
-      console.log(`S3中进行中的上传数量: ${uploadsResponse.data.uploads.length}`);
-
-      // 查找匹配的上传（基于文件名和大小）
-      const targetFileName = path.endsWith("/") ? path + file.name : path + "/" + file.name;
-      const normalizedTargetPath = targetFileName.replace(/^\/+/, "");
-
-      console.log(`查找目标文件: ${file.name}, 目标路径: ${normalizedTargetPath}`);
-
-      // 列出所有进行中的上传，用于调试
-      uploadsResponse.data.uploads.forEach((upload, index) => {
-        console.log(`上传${index + 1}: key=${upload.key}, uploadId=${upload.uploadId?.substring(0, 20)}..., 创建时间=${upload.initiated}`);
-      });
-
-      // 匹配逻辑：文件名匹配
-      existingUpload = uploadsResponse.data.uploads.find((upload) => {
-        const keyEndsWith = upload.key.endsWith(file.name);
-        const keyMatches = upload.key === normalizedTargetPath;
-
-        console.log(`检查上传: key=${upload.key}, 文件名匹配=${keyEndsWith}, 路径匹配=${keyMatches}`);
-
-        return keyEndsWith; // 先简化匹配逻辑，只要文件名匹配就认为是同一个文件
-      });
-
-      if (existingUpload) {
-        console.log(`发现现有上传: uploadId=${existingUpload.uploadId}, key=${existingUpload.key}, 创建时间=${existingUpload.initiated}`);
-        uploadId = existingUpload.uploadId;
-      } else {
-        console.log("没有找到匹配的现有上传");
-      }
+    if (!Array.isArray(items) || items.length === 0) {
+      throw new Error("copy 任务的 items 不能为空");
     }
-
-    let presignedUrls;
-    let uploadedParts = [];
-
-    if (existingUpload) {
-      // 2. 如果有现有上传，获取已上传的分片信息
-      console.log("获取已上传的分片信息...");
-      // 使用现有上传中的完整路径
-      const fullPath = path.endsWith("/") ? path + file.name : path + "/" + file.name;
-      console.log(`查询分片信息: path=${fullPath}, uploadId=${uploadId}, fileName=${file.name}`);
-      const partsResponse = await listMultipartParts(fullPath, uploadId, file.name);
-
-      if (partsResponse.success && partsResponse.data.parts) {
-        uploadedParts = partsResponse.data.parts;
-        console.log(`找到${uploadedParts.length}个已上传的分片`);
-      }
-
-      // 3. 为剩余分片生成新的预签名URL
-      const totalParts = Math.ceil(file.size / CHUNK_SIZE);
-      const uploadedPartNumbers = uploadedParts.map((p) => p.partNumber);
-      const remainingPartNumbers = [];
-
-      for (let i = 1; i <= totalParts; i++) {
-        if (!uploadedPartNumbers.includes(i)) {
-          remainingPartNumbers.push(i);
-        }
-      }
-
-      console.log(`需要上传剩余分片: [${remainingPartNumbers.join(", ")}]`);
-
-      // 检查是否还有剩余分片需要上传
-      if (remainingPartNumbers.length > 0) {
-        // 使用新的刷新URL API，为现有uploadId获取剩余分片的预签名URL
-        console.log("为现有uploadId刷新剩余分片的预签名URL...");
-        const refreshResponse = await refreshMultipartUrls(fullPath, uploadId, remainingPartNumbers);
-        if (!refreshResponse.success) {
-          throw new Error(refreshResponse.message || "刷新预签名URL失败");
-        }
-
-        // 将刷新的URL转换为原有格式
-        presignedUrls = refreshResponse.data.presignedUrls;
-        console.log(`成功为现有uploadId刷新了${presignedUrls.length}个分片的预签名URL`);
-      } else {
-        // 所有分片都已上传完成，直接完成上传
-        console.log("所有分片都已上传完成，直接完成上传");
-        const parts = uploadedParts.map((part) => ({
-          PartNumber: part.partNumber,
-          ETag: part.etag,
-        }));
-
-        const completeResponse = await completeMultipartUpload(path, uploadId, parts, file.name, file.size);
-        if (!completeResponse.success) {
-          throw new Error(completeResponse.message || "完成分片上传失败");
-        }
-
-        return {
-          success: true,
-          message: "文件上传完成（断点续传）",
-          data: completeResponse.data,
-        };
-      }
-    } else {
-      // 4. 如果没有现有上传，创建新的上传
-      console.log("创建新的分片上传...");
-      const initResponse = await initMultipartUpload(path, file.name, file.size, file.type, CHUNK_SIZE);
-      if (!initResponse.success) {
-        throw new Error(initResponse.message || "初始化分片上传失败");
-      }
-
-      uploadId = initResponse.data.uploadId;
-      presignedUrls = initResponse.data.presignedUrls;
-      console.log(`创建新上传: uploadId=${uploadId}`);
-    }
-
-    // 检查是否已取消
-    if (onCancel && onCancel()) {
-      await abortMultipartUpload(path, uploadId, file.name);
-      throw new Error("上传已取消");
-    }
-
-    // 2. 创建分片上传器
-    multipartUploader = new S3MultipartUploader({
-      maxConcurrentUploads: 3,
-      onProgress: onProgress,
-      onError: (error) => {
-        console.error("分片上传错误:", error);
+    return post("/fs/jobs", {
+      taskType: type,
+      payload: {
+        items,
+        options: {
+          skipExisting: mergedOptions.skipExisting !== false,
+          maxConcurrency: mergedOptions.maxConcurrency || 10,
+          retryPolicy: mergedOptions.retryPolicy,
+        },
       },
     });
-
-    // 设置文件内容和上传信息
-    multipartUploader.setContent(file, CHUNK_SIZE);
-    multipartUploader.setUploadInfo(uploadId, presignedUrls, `fs_${path}`);
-
-    // 5. 如果有已上传的分片，恢复状态
-    if (uploadedParts.length > 0) {
-      console.log("恢复已上传的分片状态...");
-
-      // 将S3的分片信息转换为S3MultipartUploader期望的格式
-      const s3Parts = uploadedParts.map((part) => ({
-        PartNumber: part.partNumber,
-        ETag: part.etag,
-        Size: part.size,
-        LastModified: part.lastModified,
-      }));
-
-      // 调用S3MultipartUploader的恢复方法
-      multipartUploader.restoreFromS3ListParts(s3Parts);
-
-      console.log(`已恢复${uploadedParts.length}个分片的状态`);
-    }
-
-    // 如果提供了XHR创建回调，需要适配到分片上传器
-    if (onXhrCreated) {
-      // 注意：S3MultipartUploader内部管理多个XHR，这里只能提供一个引用
-      // 实际的取消逻辑应该通过multipartUploader.abort()来处理
-      onXhrCreated({
-        abort: () => multipartUploader.abort(),
-        multipartUploader: multipartUploader,
-      });
-    }
-
-    // 3. 上传所有分片
-    const parts = await multipartUploader.uploadAllParts();
-
-    // 检查是否已取消
-    if (onCancel && onCancel()) {
-      await abortMultipartUpload(path, uploadId, file.name);
-      throw new Error("上传已取消");
-    }
-
-    // 4. 完成分片上传
-    const completeResponse = await completeMultipartUpload(path, uploadId, parts, file.name, file.size);
-    if (!completeResponse.success) {
-      throw new Error(completeResponse.message || "完成分片上传失败");
-    }
-
-    onProgress && onProgress(100);
-    return completeResponse;
-  } catch (error) {
-    // 如果有uploadId，尝试中止上传
-    if (uploadId) {
-      try {
-        await abortMultipartUpload(path, uploadId, file.name);
-      } catch (abortError) {
-        console.error("中止分片上传失败:", abortError);
-      }
-    }
-    console.error("前端分片上传失败:", error);
-    throw error;
-  } finally {
-    // 清理分片上传器
-    if (multipartUploader) {
-      multipartUploader.reset();
-    }
   }
+
+  return post("/fs/jobs", {
+    taskType: type,
+    payload: payload || {},
+  });
 }
 
 /**
- * 执行预签名URL上传的完整流程
- * @param {File} file 要上传的文件
- * @param {string} path 目标路径
- * @param {Function} onProgress 进度回调函数
- * @param {Function} onCancel 取消检查函数
- * @param {Function} onXhrCreated xhr创建回调函数
- * @returns {Promise<Object>} 上传结果
+ * 获取作业状态
+ * @param {string} jobId 作业ID
+ * @returns {Promise<Object>} 作业状态 { jobId, taskType, status, stats, createdAt, startedAt?, finishedAt?, errorMessage? }
  */
-export async function performPresignedUpload(file, path, onProgress, onCancel, onXhrCreated) {
-  try {
-    // 1. 获取预签名URL
-    const presignResponse = await getPresignedUploadUrl(path, file.name, file.type, file.size);
-    if (!presignResponse.success) {
-      throw new Error(presignResponse.message || "获取预签名URL失败");
-    }
+export async function getJobStatus(jobId) {
+  return get(`/fs/jobs/${jobId}`);
+}
 
-    const { presignedUrl: uploadUrl, ...uploadInfo } = presignResponse.data;
+/**
+ * 取消作业
+ * @param {string} jobId 作业ID
+ * @returns {Promise<Object>} 取消结果
+ */
+export async function cancelJob(jobId) {
+  return post(`/fs/jobs/${jobId}/cancel`);
+}
 
-    // 2. 使用 uploadWithPresignedUrl 上传到S3，支持进度和取消（使用后端推断的MIME类型）
-    let uploadXhr = null;
-    const uploadResult = await uploadWithPresignedUrl(uploadUrl, file, uploadInfo.contentType, onProgress, onCancel, (xhr) => {
-      uploadXhr = xhr;
-      // 如果提供了xhr创建回调，也调用它
-      if (onXhrCreated) {
-        onXhrCreated(xhr);
-      }
-    });
+/**
+ * 列出作业
+ * @param {Object} filter 过滤条件
+ * @param {string} [filter.taskType] 任务类型（'copy', 'scheduled-sync' 等）
+ * @param {string} [filter.status] 作业状态（pending/running/completed/partial/failed/cancelled）
+ * @param {number} [filter.limit=20] 返回数量限制
+ * @param {number} [filter.offset=0] 偏移量
+ * @returns {Promise<Object>} 作业列表 { jobs, total, limit, offset }
+ */
+export async function listJobs(filter = {}) {
+  const params = {
+    limit: (filter.limit || 20).toString(),
+    offset: (filter.offset || 0).toString(),
+  };
 
-    const etag = uploadResult.etag;
-
-    // 3. 提交上传完成
-    const commitResponse = await commitPresignedUpload(uploadInfo, etag, uploadInfo.contentType, file.size);
-
-    if (!commitResponse.success) {
-      throw new Error(commitResponse.message || "提交预签名上传失败");
-    }
-
-    return commitResponse;
-  } catch (error) {
-    console.error("预签名URL上传失败:", error);
-    throw error;
+  if (filter.taskType) {
+    params.taskType = filter.taskType;
   }
+
+  if (filter.status) {
+    params.status = filter.status;
+  }
+
+  return get('/fs/jobs', { params });
+}
+
+/**
+ * 获取当前用户可见的任务类型清单（用于任务管理 UI 做筛选/展示名）
+ * @returns {Promise<Object>} { types: Array<{ taskType, i18nKey?, displayName?, category?, capabilities? }> }
+ */
+export async function listJobTypes() {
+  return get("/fs/job-types");
+}
+
+/**
+ * 删除作业
+ * @param {string} jobId 作业ID
+ * @returns {Promise<Object>} 删除结果
+ */
+export async function deleteJob(jobId) {
+  return del(`/fs/jobs/${jobId}`);
 }

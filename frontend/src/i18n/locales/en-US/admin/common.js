@@ -1,6 +1,6 @@
 export default {
   login: {
-    adminLogin: "Admin Login",
+    adminLogin: "CloudPaste Login",
     apiKeyAuth: "API Key Authentication",
     username: "Username",
     password: "Password",
@@ -9,6 +9,9 @@ export default {
     loggingIn: "Logging in...",
     useApiKey: "Use API Key Login",
     useAdminAccount: "Use Admin Account Login",
+    orLoginWith: "Or",
+    useGuest: "Sign in as Guest",
+    rememberMe: "Remember this login",
     inputRequired: {
       usernamePassword: "Please enter username and password",
       apiKey: "Please enter API key",
@@ -23,11 +26,13 @@ export default {
       permissionInfo: "Unable to get permission information",
       invalidApiKey: "Invalid or unauthorized API key",
       insufficientPermissions: "Insufficient API key permissions",
+      guestLoginFailed: "Guest login failed",
     },
   },
   permissionDenied: {
     title: "Permission Denied",
   },
+  administrator: "Administrator",
   title: {
     admin: "Admin Panel",
     user: "User Panel",
@@ -36,10 +41,15 @@ export default {
     dashboard: "Dashboard",
     textManagement: "Text Management",
     fileManagement: "File Management",
-    storageConfig: "S3 Storage Config",
+    storageConfig: "Storage Management",
     mountManagement: "Mount Management",
+    fsMetaManagement: "Meta Management",
+    fsIndexManagement: "Index Management",
     keyManagement: "Key Management",
     backup: "Data Backup",
+    taskManagement: "Task Management",
+    tasks: "Tasks",
+    scheduledJobs: "Scheduled Jobs",
     systemSettings: "System Settings",
     globalSettings: "Global Settings",
     previewSettings: "Preview Settings",
@@ -52,6 +62,9 @@ export default {
     logoutAuth: "Logout Auth",
     openMenu: "Open Menu",
     closeMenu: "Close Menu",
+
+    collapse: "Collapse Sidebar",
+    expand: "Expand Sidebar",
     menuTitle: {
       admin: "Admin Panel",
       user: "User Panel",

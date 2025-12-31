@@ -16,7 +16,7 @@ import * as mountService from "./services/mountService";
 import * as systemService from "./services/systemService";
 import * as urlUploadService from "./services/urlUploadService";
 import * as fsService from "./services/fsService";
-import * as fileViewService from "./services/fileViewService";
+import * as fsIndexService from "./services/fsIndexService";
 
 // 统一服务导出 - 按功能模块重新组织
 export const api = {
@@ -34,13 +34,14 @@ export const api = {
     getFile: fileService.getFile,
     updateFile: fileService.updateFile,
     batchDeleteFiles: fileService.batchDeleteFiles,
+    getMaxUploadSize: systemService.getMaxUploadSize,
   },
 
-  // 文件分享查看相关（包含预览功能）
-  fileView: fileViewService,
-
   // 存储配置相关
-  storage: storageService,
+  storage: {
+    ...storageService,
+    getStorageConfigReveal: storageService.getStorageConfigReveal,
+  },
 
   // 挂载点管理相关
   mount: mountService,
@@ -77,6 +78,8 @@ export const api = {
     createApiKey: authService.createApiKey,
     deleteApiKey: authService.deleteApiKey,
     updateApiKey: authService.updateApiKey,
+    getApiKeyStorageAcl: authService.getApiKeyStorageAcl,
+    updateApiKeyStorageAcl: authService.updateApiKeyStorageAcl,
 
     // 文本分享管理（统一接口）
     getPastes: pasteService.getPastes,
@@ -85,14 +88,14 @@ export const api = {
     batchDeletePastes: pasteService.batchDeletePastes,
     clearExpiredPastes: pasteService.clearExpiredPastes,
 
-    // S3配置管理（已迁移到storage）
-    getAllS3Configs: storageService.getAllS3Configs,
-    getS3Config: storageService.getS3Config,
-    createS3Config: storageService.createS3Config,
-    updateS3Config: storageService.updateS3Config,
-    deleteS3Config: storageService.deleteS3Config,
-    setDefaultS3Config: storageService.setDefaultS3Config,
-    testS3Config: storageService.testS3Config,
+    // 存储配置管理
+    getStorageConfigs: storageService.getStorageConfigs,
+    getStorageConfig: storageService.getStorageConfig,
+    createStorageConfig: storageService.createStorageConfig,
+    updateStorageConfig: storageService.updateStorageConfig,
+    deleteStorageConfig: storageService.deleteStorageConfig,
+    setDefaultStorageConfig: storageService.setDefaultStorageConfig,
+    testStorageConfig: storageService.testStorageConfig,
 
     // 系统管理（已重构为分组CRUD架构）
     // 旧API已删除，请使用 api.system.* 的新分组API
@@ -103,7 +106,6 @@ export const api = {
     // 文件系统管理 - 使用统一API
     getDirectoryList: fsService.getDirectoryList,
     getFileInfo: fsService.getFileInfo,
-    getFileDownloadUrl: fsService.getFileDownloadUrl,
     getFileLink: fsService.getFileLink,
     createDirectory: fsService.createDirectory,
     uploadFile: fsService.uploadFile,
@@ -112,45 +114,17 @@ export const api = {
     updateFile: fsService.updateFile,
     // 复制相关
     batchCopyItems: fsService.batchCopyItems,
-    commitBatchCopy: fsService.commitBatchCopy,
-  },
 
-  file: {
-    // 基础文件操作
-    uploadFile: fileService.uploadFile,
-    directUploadFile: fileService.directUploadFile,
-    getUploadPresignedUrl: fileService.getUploadPresignedUrl,
-    completeFileUpload: fileService.completeFileUpload,
-    getMaxUploadSize: systemService.getMaxUploadSize,
-
-    // 统一文件管理
-    getFiles: fileService.getFiles,
-    getFile: fileService.getFile,
-    updateFile: fileService.updateFile,
-    batchDeleteFiles: fileService.batchDeleteFiles,
-
-    // 公共文件访问
-    getPublicFile: fileService.getPublicFile,
-    verifyFilePassword: fileService.verifyFilePassword,
-
-    // S3配置（兼容性，已迁移到storage）
-    getS3Configs: storageService.getAllS3Configs,
-  },
-
-  mount: {
-    // 统一挂载点管理API
-    getMountsList: mountService.getMountsList,
-    createMount: mountService.createMount,
-    updateMount: mountService.updateMount,
-    deleteMount: mountService.deleteMount,
+    // 索引管理
+    fsIndex: fsIndexService,
   },
 
   test: {
     // API密钥验证（已迁移到auth）
     verifyApiKey: authService.verifyApiKey,
 
-    // S3连接测试（已迁移到storage）
-    testS3Connection: storageService.testS3Config,
+    // 存储连接测试
+    testStorageConfig: storageService.testStorageConfig,
   },
 
   user: {
@@ -171,7 +145,6 @@ export const api = {
     fs: {
       getDirectoryList: fsService.getDirectoryList,
       getFileInfo: fsService.getFileInfo,
-      getFileDownloadUrl: fsService.getFileDownloadUrl,
       getFileLink: fsService.getFileLink,
       createDirectory: fsService.createDirectory,
       uploadFile: fsService.uploadFile,
@@ -180,18 +153,15 @@ export const api = {
       updateFile: fsService.updateFile,
       // 复制相关
       batchCopyItems: fsService.batchCopyItems,
-      commitBatchCopy: fsService.commitBatchCopy,
       // 分享相关
       createShareFromFileSystem: fsService.createShareFromFileSystem,
     },
 
-    // API密钥用户的URL上传服务
+    // API密钥用户的URL上传服务（仅负责URL元信息和内容拉取）
     urlUpload: {
       validateUrlInfo: urlUploadService.validateUrlInfo,
       getProxyUrl: urlUploadService.getProxyUrl,
-      getUrlUploadPresignedUrl: urlUploadService.getUrlUploadPresignedUrl,
-      uploadFromUrlToS3: urlUploadService.uploadFromUrlToS3,
-      commitUrlUpload: urlUploadService.commitUrlUpload,
+      fetchUrlContent: urlUploadService.fetchUrlContent,
     },
 
     // API密钥用户的系统服务

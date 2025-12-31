@@ -1,7 +1,7 @@
 /**
  * 基础存储驱动接口
  * 所有存储驱动必须实现的核心基础接口
- * 基于alist设计理念，提供最小化的必需接口
+ * 提供最小化的必需接口
  */
 
 export class BaseDriver {
@@ -105,7 +105,8 @@ export class BaseDriver {
    */
   _ensureInitialized() {
     if (!this.initialized) {
-      throw new Error(`存储驱动未初始化: ${this.type}`);
+      throw new DriverError(`存储驱动未初始化: ${this.type}`);
     }
   }
 }
+import { DriverError } from "../../../http/errors.js";

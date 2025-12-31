@@ -1,0 +1,1241 @@
+<script setup>
+import { onMounted, computed, ref, watch } from "vue";
+import { useI18n } from "vue-i18n";
+import { useStorageConfigManagement } from "@/modules/admin/storage/useStorageConfigManagement.js";
+import ConfigForm from "@/modules/admin/components/ConfigForm.vue";
+import CommonPagination from "@/components/common/CommonPagination.vue";
+import ConfirmDialog from "@/components/common/dialogs/ConfirmDialog.vue";
+import { formatDateTimeWithSeconds } from "@/utils/timeUtils.js";
+import { useThemeMode } from "@/composables/core/useThemeMode.js";
+import { useConfirmDialog } from "@/composables/core/useConfirmDialog.js";
+import { useStorageTypePresentation } from "@/modules/admin/storage/useStorageTypePresentation.js";
+import { useStorageTypeIcon } from "@/composables/core/useStorageTypeIcon.js";
+import { IconArchive, IconCalendar, IconCheck, IconCheckCircle, IconChevronRight, IconClose, IconCloud, IconDelete, IconError, IconFolderPlus, IconLink, IconRefresh, IconRename, IconXCircle } from "@/components/icons";
+
+const { isDarkMode: darkMode } = useThemeMode();
+
+// 国际化
+const { t } = useI18n();
+
+// 确认对话框
+const { dialogState, confirm, handleConfirm, handleCancel } = useConfirmDialog();
+
+// 创建适配确认函数，用于传递给 composable
+const confirmFn = async ({ title, message, confirmType }) => {
+  return await confirm({
+    title,
+    message,
+    confirmType,
+    confirmText: t("common.dialogs.deleteButton"),
+    darkMode: darkMode.value,
+  });
+};
+
+const {
+  // 状态
+  loading,
+  error,
+  storageConfigs,
+  filteredConfigs,
+  storageTypeFilter,
+  availableStorageTypes,
+  pagination,
+  pageSizeOptions,
+  currentConfig,
+  showAddForm,
+  showEditForm,
+  testResults,
+  showTestDetails,
+  selectedTestResult,
+  showDetailedResults,
+
+  // 方法
+  loadStorageConfigs,
+  handlePageChange,
+  handleLimitChange,
+  handleDeleteConfig,
+  editConfig,
+  addNewConfig,
+  handleFormSuccess,
+  handleSetDefaultConfig,
+  testConnection,
+  showTestDetailsModal,
+  STORAGE_TYPE_UNKNOWN,
+} = useStorageConfigManagement({ confirmFn });
+
+// 存储类型图标
+const { getStorageTypeIcon, getStorageTypeIconClass } = useStorageTypeIcon();
+
+// 存储类型展示/样式 helper（统一从 /api/storage-types 加载）
+const { storageTypesMeta, getTypeMeta, getTypeLabel, getBadgeClass, ensureLoaded } = useStorageTypePresentation();
+
+const formatStorageTypeLabel = (type) => {
+  return getTypeLabel(type === STORAGE_TYPE_UNKNOWN ? null : type, t);
+};
+
+const getConfigSummaryRows = (config) => {
+  if (!config) return [];
+  const meta = getTypeMeta(config.storage_type);
+  const schema = meta?.configSchema;
+  const layout = schema?.layout;
+  const summaryFields = layout?.summaryFields;
+  if (!schema || !Array.isArray(summaryFields) || summaryFields.length === 0) {
+    return [];
+  }
+
+  return summaryFields
+    .map((fieldName) => {
+      const fieldMeta = schema.fields?.find((f) => f.name === fieldName) || null;
+      const labelKey = fieldMeta?.labelKey;
+      const label = labelKey ? t(labelKey) : fieldName;
+
+      let rawValue = config[fieldName];
+      let value = rawValue;
+      const ui = fieldMeta?.ui;
+
+      // 布尔类型：优先使用 displayOptions 翻译键（兼容数字0/1）
+      const isBooleanField = fieldMeta?.type === "boolean" || typeof rawValue === "boolean";
+      if (isBooleanField) {
+        const boolValue = rawValue === true || rawValue === 1 || rawValue === "1";
+        const displayOpts = ui?.displayOptions;
+        if (displayOpts) {
+          value = boolValue ? t(displayOpts.trueKey) : t(displayOpts.falseKey);
+        } else {
+          value = boolValue ? "是" : "否";
+        }
+      }
+
+      // 计算字段的 displayOptions 处理
+      if (fieldMeta?.type === "computed" && ui?.displayOptions) {
+        const displayKey = ui.displayOptions[rawValue];
+        if (displayKey) {
+          value = t(displayKey);
+        }
+      }
+
+      // 空值处理：使用 emptyTextKey 作为默认显示
+      const isEmpty = value === undefined || value === null || String(value).trim().length === 0;
+      if (isEmpty && ui?.emptyTextKey) {
+        value = t(ui.emptyTextKey);
+      }
+
+      const show = !isEmpty || !!ui?.emptyTextKey;
+
+      return {
+        key: fieldName,
+        label,
+        value,
+        show,
+      };
+    })
+    .filter((row) => row.show);
+};
+
+const storageTypeOptions = computed(() =>
+  availableStorageTypes.value.map((type) => ({
+    value: type,
+    label: formatStorageTypeLabel(type),
+  }))
+);
+
+const hasAnyConfig = computed(() => storageConfigs.value.length > 0);
+const hasFilteredResult = computed(() => filteredConfigs.value.length > 0);
+
+const isCorsHeadersExpanded = ref(false);
+const isExposeHeadersExpanded = ref(false);
+const toggleCorsHeaders = () => {
+  isCorsHeadersExpanded.value = !isCorsHeadersExpanded.value;
+};
+const toggleExposeHeaders = () => {
+  isExposeHeadersExpanded.value = !isExposeHeadersExpanded.value;
+};
+
+watch(showTestDetails, (visible) => {
+  if (!visible) {
+    isCorsHeadersExpanded.value = false;
+    isExposeHeadersExpanded.value = false;
+  }
+});
+
+watch(selectedTestResult, () => {
+  isCorsHeadersExpanded.value = false;
+  isExposeHeadersExpanded.value = false;
+});
+
+// 格式化标签
+const formatLabel = (key) => {
+  const labels = {
+    bucket: "存储桶",
+    endpoint: "终端节点",
+    region: "区域",
+    pathStyle: "路径样式",
+    provider: "提供商",
+    directory: "目录前缀",
+  };
+  return labels[key] || key.charAt(0).toUpperCase() + key.slice(1).replace(/([A-Z])/g, " $1");
+};
+
+// 格式化日期 - 使用统一的时间处理工具
+const formatDate = (isoDate) => {
+  if (!isoDate) return "";
+  return formatDateTimeWithSeconds(isoDate);
+};
+
+// 组件加载时获取存储类型元数据和配置列表
+onMounted(async () => {
+  await ensureLoaded();
+  await loadStorageConfigs();
+});
+</script>
+
+<template>
+  <div class="p-4 flex-1 flex flex-col overflow-y-auto">
+    <h2 class="text-lg sm:text-xl font-medium mb-4" :class="darkMode ? 'text-gray-100' : 'text-gray-900'">存储管理</h2>
+
+    <div class="flex flex-wrap gap-3 mb-5 items-center">
+      <button @click="addNewConfig" class="px-3 py-2 rounded-md flex items-center space-x-1 bg-primary-500 hover:bg-primary-600 text-white font-medium transition text-sm">
+        <IconFolderPlus class="h-4 w-4" />
+        <span>添加新配置</span>
+      </button>
+
+      <button
+        @click="loadStorageConfigs"
+        class="px-3 py-2 rounded-md flex items-center space-x-1 font-medium transition text-sm"
+        :class="darkMode ? 'bg-gray-700 hover:bg-gray-600 text-gray-200' : 'bg-gray-200 hover:bg-gray-300 text-gray-700'"
+      >
+        <IconRefresh class="h-4 w-4" />
+        <span>刷新列表</span>
+      </button>
+
+      <div
+        v-if="storageTypeOptions.length > 0"
+        class="flex items-center gap-2 text-sm ml-auto"
+        :class="darkMode ? 'text-gray-300' : 'text-gray-600'"
+      >
+        <span>存储类型</span>
+        <select
+          v-model="storageTypeFilter"
+          class="px-2 py-1 rounded-md border text-sm"
+          :class="darkMode ? 'bg-gray-800 border-gray-600 text-gray-100' : 'bg-white border-gray-300 text-gray-800'"
+        >
+          <option value="all">全部</option>
+          <option v-for="option in storageTypeOptions" :key="option.value" :value="option.value">
+            {{ option.label }}
+          </option>
+        </select>
+      </div>
+    </div>
+
+    <!-- 错误提示 -->
+    <div v-if="error" class="mb-4 p-3 rounded-md text-sm" :class="darkMode ? 'bg-red-900/40 border border-red-800 text-red-200' : 'bg-red-50 text-red-800 border border-red-200'">
+      <div class="flex justify-between items-start">
+        <div class="flex items-start">
+          <IconError class="h-5 w-5 text-red-400 mr-2 mt-0.5 flex-shrink-0" />
+          <div>
+            <div class="font-medium">操作失败</div>
+            <div class="mt-1">{{ error }}</div>
+          </div>
+        </div>
+        <button @click="error = ''" class="text-red-400 hover:text-red-500" :class="darkMode ? 'hover:text-red-300' : 'hover:text-red-600'">
+          <IconClose class="h-5 w-5" />
+        </button>
+      </div>
+    </div>
+
+    <!-- 内容区域 -->
+    <div class="flex-1 flex flex-col">
+      <!-- 加载状态 -->
+      <div v-if="loading" class="flex justify-center items-center h-40">
+        <IconRefresh class="animate-spin h-8 w-8 text-primary-500" />
+      </div>
+
+      <!-- 存储配置列表 -->
+      <template v-else-if="hasAnyConfig">
+        <!-- 有筛选结果时显示配置列表 -->
+        <div v-if="hasFilteredResult" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-0 sm:p-3">
+          <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-2 gap-3 sm:gap-4">
+            <div
+              v-for="config in filteredConfigs"
+              :key="config.id"
+              class="rounded-lg shadow-md overflow-hidden transition-colors duration-200 border relative"
+              :class="[
+                darkMode ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200',
+                config.is_default ? (darkMode ? 'ring-3 ring-primary-500 border-primary-500 shadow-lg' : 'ring-3 ring-primary-500 border-primary-500 shadow-lg') : '',
+              ]"
+            >
+              <div class="px-2 py-2 sm:px-3 sm:py-2.5 flex flex-wrap justify-between items-center gap-2 border-b" :class="darkMode ? 'bg-gray-700 border-gray-600' : 'bg-gray-50 border-gray-200'">
+                <div class="flex items-center gap-1 sm:gap-2 flex-wrap min-w-0">
+                  <component
+                    :is="getStorageTypeIcon(config.storage_type)"
+                    :class="['h-4 w-4 sm:h-5 sm:w-5 flex-shrink-0', getStorageTypeIconClass(config.storage_type, darkMode)]"
+                  />
+                  <h3 class="font-medium text-sm" :class="[darkMode ? 'text-gray-100' : 'text-gray-900', config.is_default ? 'font-semibold' : '']">
+                    {{ config.name }}
+                  </h3>
+                  <span
+                    v-if="config.is_default"
+                    class="text-xs px-1.5 sm:px-2 py-0.5 rounded-full font-medium flex-shrink-0"
+                    :class="darkMode ? 'bg-primary-600 text-white' : 'bg-primary-500 text-white'"
+                  >
+                    默认
+                  </span>
+                  <span
+                    v-if="config.url_proxy"
+                    class="text-xs px-1.5 sm:px-2 py-0.5 rounded-full font-medium flex items-center gap-0.5 sm:gap-1 flex-shrink-0"
+                    :class="darkMode ? 'bg-blue-600/20 text-blue-300 border border-blue-500/30' : 'bg-blue-100 text-blue-700 border border-blue-200'"
+                    :title="`代理URL: ${config.url_proxy}`"
+                  >
+                    <IconLink class="h-3 w-3" />
+                    <span class="hidden sm:inline">代理</span>
+                  </span>
+                </div>
+                <div class="flex items-center gap-1 sm:gap-2 flex-wrap flex-shrink-0">
+                  <span
+                    v-if="config.provider_type"
+                    class="text-xs px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-medium whitespace-nowrap"
+                    :class="darkMode ? 'bg-primary-900/40 text-primary-200' : 'bg-primary-100 text-primary-800'"
+                  >
+                    {{ config.provider_type }}
+                  </span>
+                  <span
+                    class="text-xs px-1.5 sm:px-2 py-0.5 sm:py-1 rounded-full font-medium whitespace-nowrap"
+                    :class="getBadgeClass(config.storage_type, darkMode)"
+                  >
+                    {{ formatStorageTypeLabel(config.storage_type) }}
+                  </span>
+                </div>
+              </div>
+
+              <div class="p-3 sm:p-4">
+                <div :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
+                  <!-- 类型特定字段：使用策略生成摘要 -->
+                  <div v-if="getConfigSummaryRows(config).length" class="grid grid-cols-1 gap-2 text-sm">
+                    <div
+                      v-for="row in getConfigSummaryRows(config)"
+                      :key="row.key"
+                      class="flex justify-between"
+                    >
+                      <span class="font-medium">{{ row.label }}:</span>
+                      <span
+                        v-if="row.key === 'endpoint_url'"
+                        class="truncate ml-2 max-w-[60%] text-right"
+                        :title="row.value"
+                      >
+                        {{ row.value }}
+                      </span>
+                      <span v-else>{{ row.value }}</span>
+                    </div>
+                  </div>
+
+                  <!-- 通用字段 -->
+                  <div
+                    class="grid grid-cols-1 gap-2 text-sm mt-2 pt-2 border-t"
+                    :class="darkMode ? 'border-gray-600' : 'border-gray-200'"
+                  >
+
+                    <div class="flex justify-between">
+                      <span class="font-medium">API密钥可见:</span>
+                      <span class="flex items-center">
+                        <IconCheckCircle v-if="config.is_public" class="h-4 w-4 mr-1 text-green-500" />
+                        <IconXCircle v-else class="h-4 w-4 mr-1 text-gray-400" />
+                        {{ config.is_public ? "允许" : "禁止" }}
+                      </span>
+                    </div>
+
+                    <div class="flex justify-between">
+                      <span class="font-medium">上次使用:</span>
+                      <span>{{ config.last_used ? formatDate(config.last_used) : "从未使用" }}</span>
+                    </div>
+
+                    <div class="flex justify-between">
+                      <span class="font-medium">创建时间:</span>
+                      <span>{{ formatDate(config.created_at) }}</span>
+                    </div>
+                  </div>
+
+                  <!-- 测试结果 -->
+                  <div class="mt-2">
+                    <div v-if="testResults[config.id] && !testResults[config.id].loading" class="mt-2">
+                      <div
+                        :class="[testResults[config.id].success ? 'text-green-500' : testResults[config.id].partialSuccess ? 'text-amber-500' : 'text-red-500']"
+                        class="font-semibold"
+                      >
+                        {{ testResults[config.id].message }}
+                      </div>
+
+                      <div v-if="testResults[config.id].details" class="mt-1 text-sm whitespace-pre-line text-gray-700 dark:text-gray-300">
+                        {{ testResults[config.id].details }}
+                      </div>
+
+                      <!-- 查看详情按钮 -->
+                      <div v-if="testResults[config.id].result" class="mt-2">
+                        <button @click="showTestDetailsModal(config.id)" class="text-xs text-blue-600 dark:text-blue-400 hover:underline">查看详细信息</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-4 flex flex-wrap gap-2">
+                  <button
+                    v-if="!config.is_default"
+                    @click="handleSetDefaultConfig(config.id)"
+                    class="flex items-center px-3 py-1.5 rounded text-sm font-medium transition"
+                    :class="darkMode ? 'bg-primary-600 hover:bg-primary-700 text-white' : 'bg-primary-100 hover:bg-primary-200 text-primary-800'"
+                  >
+                    <IconCheck class="h-4 w-4 mr-1.5" />
+                    设为默认
+                  </button>
+
+                  <button
+                    @click="testConnection(config.id)"
+                    class="flex items-center px-3 py-1.5 rounded text-sm font-medium transition"
+                    :class="
+                      testResults[config.id]?.loading
+                        ? 'opacity-50 cursor-wait'
+                        : darkMode
+                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                        : 'bg-blue-100 hover:bg-blue-200 text-blue-800'
+                    "
+                    :disabled="testResults[config.id]?.loading"
+                  >
+                    <template v-if="testResults[config.id]?.loading">
+                      <IconRefresh class="animate-spin h-4 w-4 mr-1.5" />
+                      测试中...
+                    </template>
+                    <template v-else>
+                      <IconCalendar class="h-4 w-4 mr-1.5" />
+                      测试连接
+                    </template>
+                  </button>
+
+                  <button
+                    @click="editConfig(config)"
+                    class="flex items-center px-3 py-1.5 rounded text-sm font-medium transition"
+                    :class="darkMode ? 'bg-gray-600 hover:bg-gray-700 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-800'"
+                  >
+                    <IconRename class="h-4 w-4 mr-1.5" />
+                    编辑
+                  </button>
+
+                  <button
+                    @click="handleDeleteConfig(config.id)"
+                    class="flex items-center px-3 py-1.5 rounded text-sm font-medium transition"
+                    :class="darkMode ? 'bg-red-600 hover:bg-red-700 text-white' : 'bg-red-100 hover:bg-red-200 text-red-800'"
+                  >
+                    <IconDelete class="h-4 w-4 mr-1.5" />
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 分页组件 - 只在有筛选结果时显示 -->
+          <div class="mt-4">
+            <CommonPagination
+              :dark-mode="darkMode"
+              :pagination="pagination"
+              :page-size-options="pageSizeOptions"
+              mode="page"
+              @page-changed="handlePageChange"
+              @limit-changed="handleLimitChange"
+            />
+          </div>
+        </div>
+
+        <!-- 无筛选结果时显示提示 - 使用v-if而非v-else -->
+        <div v-if="!hasFilteredResult" class="bg-white dark:bg-gray-800 shadow-md rounded-lg p-6 text-center text-sm" :class="darkMode ? 'text-gray-300' : 'text-gray-600'">
+          <p>没有符合当前筛选条件的存储配置。</p>
+        </div>
+      </template>
+
+      <!-- 空状态 -->
+      <div
+        v-else-if="!loading"
+        class="rounded-lg p-6 text-center transition-colors duration-200 flex-1 flex flex-col justify-center items-center bg-white dark:bg-gray-800 shadow-md"
+        :class="darkMode ? 'text-gray-300' : 'text-gray-600'"
+      >
+        <IconCloud class="mx-auto h-16 w-16 mb-4 text-gray-400" />
+        <h3 class="text-lg font-medium mb-2" :class="darkMode ? 'text-gray-200' : 'text-gray-700'">尚未配置任何存储</h3>
+        <p class="mb-5 text-sm max-w-md">添加您的第一个存储配置，支持多种对象存储或 WebDAV 服务。</p>
+        <button @click="addNewConfig" class="px-4 py-2 rounded-md bg-primary-500 hover:bg-primary-600 text-white font-medium transition inline-flex items-center">
+          <IconFolderPlus class="h-5 w-5 mr-1.5" />
+          添加配置
+        </button>
+      </div>
+    </div>
+
+    <!-- 添加/编辑表单弹窗 -->
+    <ConfigForm
+      v-if="showAddForm || showEditForm"
+      :dark-mode="darkMode"
+      :config="currentConfig"
+      :is-edit="showEditForm"
+      @close="
+        showAddForm = false;
+        showEditForm = false;
+      "
+      @success="handleFormSuccess"
+    />
+
+    <!-- 测试结果详情模态框 -->
+    <div
+      v-if="showTestDetails && selectedTestResult"
+      class="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black bg-opacity-50 overflow-y-auto"
+      @click="showTestDetails = false"
+    >
+      <div class="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-lg overflow-hidden" @click.stop>
+        <div class="p-3 sm:p-4 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+          <h3 class="text-base sm:text-lg font-medium text-gray-900 dark:text-white">存储连接测试结果</h3>
+          <button @click="showTestDetails = false" class="text-gray-400 hover:text-gray-500">
+            <IconClose class="h-5 w-5" />
+          </button>
+        </div>
+
+        <div class="p-3 sm:p-4 max-h-[70vh] overflow-y-auto">
+          <!-- 连接总结 -->
+          <div
+            class="mb-3 p-2 sm:p-3 rounded"
+            :class="[
+              selectedTestResult.success
+                ? 'bg-green-50 dark:bg-green-900/30'
+                : selectedTestResult.partialSuccess
+                ? 'bg-amber-50 dark:bg-amber-900/30'
+                : 'bg-red-50 dark:bg-red-900/30',
+            ]"
+          >
+            <div
+              class="font-semibold"
+              :class="[
+                selectedTestResult.success
+                  ? 'text-green-700 dark:text-green-400'
+                  : selectedTestResult.partialSuccess
+                  ? 'text-amber-700 dark:text-amber-400'
+                  : 'text-red-700 dark:text-red-400',
+              ]"
+            >
+              {{ selectedTestResult.message }}
+            </div>
+            <div v-if="selectedTestResult.details" class="mt-1 text-sm text-gray-700 dark:text-gray-300 whitespace-pre-line">
+              {{ selectedTestResult.details }}
+            </div>
+          </div>
+
+          <!-- 折叠/展开控制 -->
+          <div class="mb-3">
+            <button
+              @click="showDetailedResults = !showDetailedResults"
+              class="text-sm flex items-center text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+            >
+              <IconChevronRight class="h-4 w-4 mr-1 transition-transform duration-200" :class="showDetailedResults ? 'rotate-90' : ''" />
+              {{ showDetailedResults ? "隐藏详细结果" : "显示详细结果" }}
+            </button>
+          </div>
+
+          <div v-if="showDetailedResults" class="space-y-4">
+            <!-- 连接信息 - OneDrive（基于 result.info） -->
+            <div
+              class="mb-3"
+              v-if="
+                selectedTestResult.result?.info &&
+                (selectedTestResult.result.info.driveName || selectedTestResult.result.info.driveType)
+              "
+            >
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">连接信息</h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="space-y-2">
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.region">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">区域:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.info.region }}</div>
+                  </div>
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.driveName">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">驱动器名称:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.info.driveName }}</div>
+                  </div>
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.defaultFolder">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">默认上传目录:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.info.defaultFolder }}</div>
+                  </div>
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.quota">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">存储配额:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      <span v-if="selectedTestResult.result.info.quota.used !== null">
+                        已用: {{ (selectedTestResult.result.info.quota.used / 1024 / 1024 / 1024).toFixed(2) }} GB
+                      </span>
+                      <span
+                        v-if="
+                          selectedTestResult.result.info.quota.used !== null &&
+                          selectedTestResult.result.info.quota.total !== null
+                        "
+                      >
+                        /
+                      </span>
+                      <span v-if="selectedTestResult.result.info.quota.total !== null">
+                        总计: {{ (selectedTestResult.result.info.quota.total / 1024 / 1024 / 1024).toFixed(2) }} GB
+                      </span>
+                    </div>
+                  </div>
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.responseTime">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">响应时间:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      {{ selectedTestResult.result.info.responseTime }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 连接信息 - S3 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.connectionInfo">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">连接信息</h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="space-y-2">
+                  <div v-for="(value, key) in selectedTestResult.result.connectionInfo" :key="key" class="connection-info-item">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">{{ formatLabel(key) }}:</div>
+                    <div
+                      class="pl-2 text-gray-900 dark:text-gray-200 break-all overflow-wrap-anywhere"
+                      :class="{ 'endpoint-url': key === 'endpoint' || key.includes('url') || key.includes('URI') }"
+                    >
+                      {{ value || "未设置" }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 连接信息 - WebDAV（info 存在且非 OneDrive/S3 CORS 测试形态） -->
+            <div
+              class="mb-3"
+              v-if="
+                selectedTestResult.result?.info &&
+                !selectedTestResult.result?.connectionInfo &&
+                !selectedTestResult.result?.cors &&
+                !selectedTestResult.result.info.driveName &&
+                !selectedTestResult.result.info.driveType
+              "
+            >
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">连接信息</h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="space-y-2">
+                  <div class="connection-info-item">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">端点地址:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200 break-all overflow-wrap-anywhere endpoint-url">
+                      {{ selectedTestResult.result.info.endpoint || "未设置" }}
+                    </div>
+                  </div>
+
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.defaultFolder">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">默认目录:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      {{ selectedTestResult.result.info.defaultFolder || "/" }}
+                    </div>
+                  </div>
+
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.davCompliance">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">DAV协议支持:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      <template v-if="selectedTestResult.result.info.davCompliance.compliance">
+                        {{ selectedTestResult.result.info.davCompliance.compliance.join(", ") }}
+                        <span v-if="selectedTestResult.result.info.davCompliance.server" class="text-gray-500 dark:text-gray-400 ml-1">
+                          ({{ selectedTestResult.result.info.davCompliance.server }})
+                        </span>
+                      </template>
+                      <template v-else-if="Array.isArray(selectedTestResult.result.info.davCompliance)">
+                        {{ selectedTestResult.result.info.davCompliance.join(", ") }}
+                      </template>
+                      <template v-else>
+                        {{ String(selectedTestResult.result.info.davCompliance) }}
+                      </template>
+                    </div>
+                  </div>
+
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.quota && (selectedTestResult.result.info.quota.used !== null || selectedTestResult.result.info.quota.available !== null)">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">存储配额:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      <span v-if="selectedTestResult.result.info.quota.used !== null">
+                        已用: {{ (selectedTestResult.result.info.quota.used / 1024 / 1024).toFixed(2) }} MB
+                      </span>
+                      <span v-if="selectedTestResult.result.info.quota.used !== null && selectedTestResult.result.info.quota.available !== null"> / </span>
+                      <span v-if="selectedTestResult.result.info.quota.available !== null">
+                        可用: {{ (selectedTestResult.result.info.quota.available / 1024 / 1024).toFixed(2) }} MB
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.tlsSkipVerify">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">TLS证书验证:</div>
+                    <div class="pl-2 text-yellow-600 dark:text-yellow-400">
+                      已跳过（不安全）
+                    </div>
+                  </div>
+
+                  <div class="connection-info-item" v-if="selectedTestResult.result.info.customHost">
+                    <div class="text-gray-500 dark:text-gray-400 font-medium mb-0.5">自定义Host:</div>
+                    <div class="pl-2 text-gray-900 dark:text-gray-200">
+                      {{ selectedTestResult.result.info.customHost }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 读取权限测试 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.read">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">读取权限测试</h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="flex items-center mb-1">
+                  <span class="mr-1" :class="selectedTestResult.result?.read?.success ? 'text-green-500' : 'text-red-500'">
+                    <IconCheck v-if="selectedTestResult.result?.read?.success" class="h-4 w-4" />
+                    <IconClose v-else class="h-4 w-4" />
+                  </span>
+                  <span :class="selectedTestResult.result?.read?.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'">
+                    {{ selectedTestResult.result?.read?.success ? "读取权限测试成功" : "读取权限测试失败" }}
+                  </span>
+                </div>
+
+                <!-- 添加测试说明 -->
+                <div v-if="selectedTestResult.result?.read?.note" class="mb-2 pl-5 text-amber-600 dark:text-amber-400 text-xs italic">
+                  <IconError class="h-3 w-3 inline-block mr-1" />
+                  {{ selectedTestResult.result.read.note }}
+                </div>
+
+                <div v-if="selectedTestResult.result?.read?.success" class="pl-5">
+                  <div class="grid grid-cols-2 gap-1">
+                    <div class="text-gray-500 dark:text-gray-400">路径前缀:</div>
+                    <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.read.prefix }}</div>
+
+                    <div class="text-gray-500 dark:text-gray-400">对象数量:</div>
+                    <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.read.objectCount }}</div>
+                  </div>
+
+                  <!-- 显示首几个对象 -->
+                  <div v-if="selectedTestResult.result.read.firstObjects && selectedTestResult.result.read.firstObjects.length > 0" class="mt-2">
+                    <div class="text-gray-500 dark:text-gray-400 mb-1">存储桶中的对象(仅展示前3个):</div>
+                    <div class="bg-gray-100 dark:bg-gray-800 rounded p-1 max-h-16 overflow-y-auto">
+                      <div v-for="(obj, index) in selectedTestResult.result.read.firstObjects" :key="index" class="text-xs py-0.5">
+                        <div class="flex items-start">
+                          <span class="text-gray-400 dark:text-gray-500 mr-1 shrink-0">{{ index + 1 }}.</span>
+                          <div class="min-w-0 truncate">
+                            <div class="text-gray-900 dark:text-gray-200 truncate">{{ obj.key }}</div>
+                            <div class="text-gray-500 dark:text-gray-400 text-xs mt-0.5">{{ obj.size }} · {{ formatDate(obj.lastModified) }}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div v-if="selectedTestResult.result?.read?.error" class="mt-1 text-red-600 dark:text-red-400">
+                  <div class="font-medium text-xs">错误信息:</div>
+                  <div class="bg-red-50 dark:bg-red-900/20 p-1 rounded mt-0.5 text-xs max-h-20 overflow-auto">
+                    {{ selectedTestResult.result.read.error }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 写入权限测试 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.write">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">写入权限测试</h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="flex items-center mb-1">
+                  <span class="mr-1" :class="selectedTestResult.result?.write?.success ? 'text-green-500' : 'text-red-500'">
+                    <IconCheck v-if="selectedTestResult.result?.write?.success" class="h-4 w-4" />
+                    <IconClose v-else class="h-4 w-4" />
+                  </span>
+                  <span :class="selectedTestResult.result?.write?.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'">
+                    {{ selectedTestResult.result?.write?.success ? "写入权限测试成功" : "写入权限测试失败" }}
+                  </span>
+                </div>
+
+                <!-- 添加测试说明 -->
+                <div v-if="selectedTestResult.result?.write?.note" class="mb-2 pl-5 text-amber-600 dark:text-amber-400 text-xs italic">
+                  <IconError class="h-3 w-3 inline-block mr-1" />
+                  {{ selectedTestResult.result.write.note }}
+                </div>
+
+                <div v-if="selectedTestResult.result?.write?.success" class="pl-5">
+                  <div class="grid grid-cols-2 gap-1">
+                    <template v-if="selectedTestResult.result.write.testFile">
+                      <div class="text-gray-500 dark:text-gray-400">测试文件:</div>
+                      <div class="text-gray-900 dark:text-gray-200 truncate">{{ selectedTestResult.result.write.testFile }}</div>
+                    </template>
+
+                    <template v-if="selectedTestResult.result.write.uploadTime">
+                      <div class="text-gray-500 dark:text-gray-400">上传时间:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.write.uploadTime }}ms</div>
+                    </template>
+
+                    <div class="text-gray-500 dark:text-gray-400">已清理:</div>
+                    <div :class="selectedTestResult.result.write.cleaned ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'">
+                      {{ selectedTestResult.result.write.cleaned ? "是" : "否" }}
+                    </div>
+                  </div>
+
+                  <div
+                    v-if="selectedTestResult.result.write.note && !selectedTestResult.result.write.note.includes('后端')"
+                    class="mt-1 text-gray-500 dark:text-gray-400 text-xs italic"
+                  >
+                    {{ selectedTestResult.result.write.note }}
+                  </div>
+
+                  <div v-if="!selectedTestResult.result.write.cleaned && selectedTestResult.result.write.cleanupError" class="mt-1 text-yellow-600 dark:text-yellow-400 text-xs">
+                    <div>清理警告: {{ selectedTestResult.result.write.cleanupError }}</div>
+                  </div>
+                </div>
+
+                <div v-if="selectedTestResult.result?.write?.error" class="mt-1 text-red-600 dark:text-red-400">
+                  <div class="font-medium text-xs">错误信息:</div>
+                  <div class="bg-red-50 dark:bg-red-900/20 p-1 rounded mt-0.5 text-xs max-h-20 overflow-auto">
+                    {{ selectedTestResult.result.write.error }}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 跨域CORS测试 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.cors">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+                跨域CORS配置测试
+                <span
+                  class="ml-1.5 text-xs px-1.5 py-0.5 rounded"
+                  :class="
+                    selectedTestResult.result?.cors?.success
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                      : 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-400'
+                  "
+                >
+                  基础测试
+                </span>
+              </h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="flex items-center mb-1">
+                  <span class="mr-1" :class="selectedTestResult.result?.cors?.success ? 'text-green-500' : 'text-red-500'">
+                    <IconCheck v-if="selectedTestResult.result?.cors?.success" class="h-4 w-4" />
+                    <IconClose v-else class="h-4 w-4" />
+                  </span>
+                  <span :class="selectedTestResult.result?.cors?.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'">
+                    {{ selectedTestResult.result?.cors?.success ? "CORS预检请求测试通过" : "CORS预检请求测试失败" }}
+                  </span>
+                </div>
+
+                <div v-if="selectedTestResult.result?.cors?.detail" class="pl-5 text-gray-500 dark:text-gray-400 mb-1">
+                  {{ selectedTestResult.result.cors.detail }}
+                </div>
+
+                <!-- CORS响应头信息 -->
+                <div v-if="selectedTestResult.result?.cors?.success" class="grid grid-cols-2 gap-1 pl-5 mt-1">
+                  <div class="text-gray-500 dark:text-gray-400">允许来源:</div>
+                  <div class="text-gray-900 dark:text-gray-200 truncate">{{ selectedTestResult.result.cors.allowOrigin || "未指定" }}</div>
+
+                  <div class="text-gray-500 dark:text-gray-400">允许方法:</div>
+                  <div class="text-gray-900 dark:text-gray-200 truncate">{{ selectedTestResult.result.cors.allowMethods || "未指定" }}</div>
+
+                  <div class="text-gray-500 dark:text-gray-400">允许的头部:</div>
+                  <div class="text-gray-900 dark:text-gray-200 flex items-start gap-2">
+                    <span
+                      :class="[
+                        'flex-1',
+                        isCorsHeadersExpanded ? 'whitespace-normal break-words' : 'truncate max-w-full'
+                      ]"
+                    >
+                      {{ selectedTestResult.result.cors.allowHeaders || "未指定" }}
+                    </span>
+                    <button
+                      v-if="selectedTestResult.result.cors.allowHeaders && selectedTestResult.result.cors.allowHeaders.length > 40"
+                      @click="toggleCorsHeaders"
+                      class="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+                    >
+                      {{ isCorsHeadersExpanded ? "收起" : "展开" }}
+                    </button>
+                  </div>
+
+                  <template v-if="selectedTestResult.result.cors.exposeHeaders">
+                    <div class="text-gray-500 dark:text-gray-400">暴露的头部:</div>
+                    <div class="text-gray-900 dark:text-gray-200 flex items-start gap-2">
+                      <span
+                        :class="[
+                          'flex-1',
+                          isExposeHeadersExpanded ? 'whitespace-normal break-words' : 'truncate max-w-full'
+                        ]"
+                      >
+                        {{ selectedTestResult.result.cors.exposeHeaders }}
+                      </span>
+                      <button
+                        v-if="selectedTestResult.result.cors.exposeHeaders.length > 40"
+                        @click="toggleExposeHeaders"
+                        class="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap"
+                      >
+                        {{ isExposeHeadersExpanded ? "收起" : "展开" }}
+                      </button>
+                    </div>
+                  </template>
+
+                  <div class="text-gray-500 dark:text-gray-400">缓存时间 (秒):</div>
+                  <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.cors.maxAge || "未指定" }}</div>
+                </div>
+
+                <div
+                  v-if="selectedTestResult.result?.cors?.supportedNotes && !selectedTestResult.result.cors.success"
+                  class="mt-1 pl-5 text-amber-600 dark:text-amber-400 text-xs"
+                >
+                  {{ selectedTestResult.result.cors.supportedNotes }}
+                </div>
+
+                <div v-if="selectedTestResult.result?.cors?.error" class="mt-1 text-red-600 dark:text-red-400">
+                  <div class="font-medium text-xs">错误信息:</div>
+                  <div class="bg-red-50 dark:bg-red-900/20 p-1 rounded mt-0.5 text-xs max-h-20 overflow-auto">
+                    {{ selectedTestResult.result.cors.error }}
+                  </div>
+                </div>
+
+                <div v-if="!selectedTestResult.result?.cors?.success && !selectedTestResult.result?.cors?.error" class="pl-5 text-amber-600 dark:text-amber-400">
+                  跨域配置未正确设置，预检请求未通过，前端无法直接上传文件到此存储服务。
+                </div>
+              </div>
+            </div>
+
+            <!-- 存储诊断信息 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.diagnostics">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+                存储诊断
+                <span class="ml-1.5 text-xs px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-400">辅助</span>
+              </h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm space-y-2">
+                <div v-if="selectedTestResult.result.diagnostics?.lifecycle">
+                  <div class="font-medium text-gray-700 dark:text-gray-200 mt-2">生命周期配置</div>
+                  <div v-if="!selectedTestResult.result.diagnostics.lifecycle.supported" class="text-gray-500 dark:text-gray-400 mt-1">
+                    无法获取生命周期信息：{{ selectedTestResult.result.diagnostics.lifecycle.error || '提供商不支持' }}
+                  </div>
+                  <div v-else-if="selectedTestResult.result.diagnostics.lifecycle.hasRules" class="mt-1 space-y-1">
+                    <div
+                      v-for="(rule, idx) in selectedTestResult.result.diagnostics.lifecycle.rules"
+                      :key="rule.id || idx"
+                      class="border border-gray-200 dark:border-gray-700 rounded p-2 text-xs"
+                    >
+                      <div class="flex justify-between text-gray-700 dark:text-gray-200">
+                        <span>规则 {{ rule.id || idx + 1 }}</span>
+                        <span class="text-xs">{{ rule.status || 'UNKNOWN' }}</span>
+                      </div>
+                      <div v-if="rule.expiration" class="text-gray-500 dark:text-gray-400 mt-1">
+                        过期策略: {{ JSON.stringify(rule.expiration) }}
+                      </div>
+                      <div v-if="rule.transitions?.length" class="text-gray-500 dark:text-gray-400 mt-1">
+                        转储策略: {{ JSON.stringify(rule.transitions) }}
+                      </div>
+                    </div>
+                  </div>
+                  <div v-else class="text-gray-500 dark:text-gray-400 mt-1">未配置生命周期规则</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 预签名 PUT 链路自测 -->
+            <div class="mb-3" v-if="selectedTestResult.result?.frontendSim">
+              <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 flex items-center">
+                预签名上传测试
+                <span
+                  class="ml-1.5 text-xs px-1.5 py-0.5 rounded"
+                  :class="
+                    selectedTestResult.result?.frontendSim?.success
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-400'
+                      : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-400'
+                  "
+                >
+                  关键测试
+                </span>
+              </h4>
+              <div class="bg-gray-50 dark:bg-gray-900/50 rounded p-2 sm:p-3 text-xs sm:text-sm">
+                <div class="flex items-center mb-1">
+                  <span class="mr-1" :class="selectedTestResult.result?.frontendSim?.success ? 'text-green-500' : 'text-red-500'">
+                    <IconCheck v-if="selectedTestResult.result?.frontendSim?.success" class="h-4 w-4" />
+                    <IconClose v-else class="h-4 w-4" />
+                  </span>
+                  <span :class="selectedTestResult.result?.frontendSim?.success ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'">
+                  {{ selectedTestResult.result?.frontendSim?.success ? "上传测试通过" : "上传测试失败" }}
+                  </span>
+                </div>
+
+                <!-- 添加测试说明 -->
+                <div v-if="selectedTestResult.result?.frontendSim?.note" class="mb-2 pl-5 text-amber-600 dark:text-amber-400 text-xs italic">
+                  <IconError class="h-3 w-3 inline-block mr-1" />
+                  {{ selectedTestResult.result.frontendSim.note }}
+                </div>
+
+                <!-- 显示步骤状态 -->
+                <div v-if="selectedTestResult.result?.frontendSim?.steps" class="pl-5 space-y-2 mt-2">
+                  <!-- 步骤1: 获取预签名URL -->
+                  <div class="bg-gray-100 dark:bg-gray-800 rounded p-1.5">
+                    <div class="flex items-center">
+                      <span
+                        class="w-4 h-4 flex-shrink-0 mr-1.5 rounded-full flex items-center justify-center text-white text-xs"
+                        :class="selectedTestResult.result.frontendSim.steps.step1?.success ? 'bg-green-500' : 'bg-red-500'"
+                      >
+                        1
+                      </span>
+                      <span class="font-medium">{{ selectedTestResult.result.frontendSim.steps.step1?.name || "获取预签名URL" }}</span>
+                      <span class="ml-auto" :class="selectedTestResult.result.frontendSim.steps.step1?.success ? 'text-green-500' : 'text-red-500'">
+                        <IconCheck v-if="selectedTestResult.result.frontendSim.steps.step1?.success" class="h-4 w-4" />
+                        <IconClose v-else class="h-4 w-4" />
+                      </span>
+                    </div>
+                    <!-- 步骤1详情 -->
+                    <div v-if="selectedTestResult.result.frontendSim.steps.step1?.success" class="mt-1 text-xs pl-6">
+                      <div v-if="selectedTestResult.result.frontendSim.steps.step1?.presignedUrl" class="text-gray-500 dark:text-gray-400">
+                        <span class="font-medium">URL:</span>
+                        <span class="url-display inline-block max-w-full overflow-hidden text-ellipsis whitespace-nowrap">
+                          {{ selectedTestResult.result.frontendSim.steps.step1.presignedUrl }}
+                        </span>
+                        <button
+                          @click="$event.currentTarget.previousElementSibling.classList.toggle('whitespace-nowrap')"
+                          class="text-blue-500 hover:text-blue-600 text-xs ml-1 inline-flex items-center"
+                        >
+                          <IconChevronRight class="h-3 w-3 mr-0.5" />
+                          <span>展开/收起</span>
+                        </button>
+                      </div>
+                      <div v-if="selectedTestResult.result.frontendSim.steps.step1?.duration" class="text-gray-500 dark:text-gray-400 mt-1">
+                        <span class="font-medium">耗时:</span> {{ selectedTestResult.result.frontendSim.steps.step1.duration }}ms
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 步骤2: XHR文件上传 -->
+                  <div class="bg-gray-100 dark:bg-gray-800 rounded p-1.5">
+                    <div class="flex items-center">
+                      <span
+                        class="w-4 h-4 flex-shrink-0 mr-1.5 rounded-full flex items-center justify-center text-white text-xs"
+                        :class="
+                          selectedTestResult.result.frontendSim.steps.step2?.success
+                            ? 'bg-green-500'
+                            : selectedTestResult.result.frontendSim.steps.step1?.success
+                            ? 'bg-red-500'
+                            : 'bg-gray-400'
+                        "
+                      >
+                        2
+                      </span>
+                      <span class="font-medium">{{ selectedTestResult.result.frontendSim.steps.step2?.name || "模拟文件上传" }}</span>
+                      <span
+                        v-if="selectedTestResult.result.frontendSim.steps.step1?.success"
+                        class="ml-auto"
+                        :class="selectedTestResult.result.frontendSim.steps.step2?.success ? 'text-green-500' : 'text-red-500'"
+                      >
+                        <IconCheck v-if="selectedTestResult.result.frontendSim.steps.step2?.success" class="h-4 w-4" />
+                        <IconClose v-else class="h-4 w-4" />
+                      </span>
+                    </div>
+                    <!-- 步骤2详情 -->
+                    <div v-if="selectedTestResult.result.frontendSim.steps.step2?.success" class="mt-1 text-xs pl-6 grid grid-cols-2 gap-1">
+                      <div class="text-gray-500 dark:text-gray-400">上传耗时:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step2.duration }}ms</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">上传速度:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step2.uploadSpeed }}</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">状态码:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step2.statusCode }}</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">ETag:</div>
+                      <div class="text-gray-900 dark:text-gray-200 truncate" :title="selectedTestResult.result.frontendSim.steps.step2.etag">
+                        {{ selectedTestResult.result.frontendSim.steps.step2.etag || "未返回" }}
+                      </div>
+                    </div>
+                    <!-- 上传错误 -->
+                    <div v-else-if="selectedTestResult.result.frontendSim.steps.step1?.success" class="mt-1 text-xs pl-6 text-red-600 dark:text-red-400">
+                      <div v-if="selectedTestResult.result.frontendSim.steps.step2?.statusCode" class="font-medium">
+                        错误状态码: {{ selectedTestResult.result.frontendSim.steps.step2.statusCode }} {{ selectedTestResult.result.frontendSim.steps.step2.statusText }}
+                      </div>
+                      <div v-if="selectedTestResult.result.frontendSim.steps.step2?.error" class="mt-0.5 bg-red-50 dark:bg-red-900/20 p-1 rounded max-h-16 overflow-auto">
+                        {{ selectedTestResult.result.frontendSim.steps.step2.error }}
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- 步骤3: 验证上传结果 -->
+                  <div class="bg-gray-100 dark:bg-gray-800 rounded p-1.5">
+                    <div class="flex items-center">
+                      <span
+                        class="w-4 h-4 flex-shrink-0 mr-1.5 rounded-full flex items-center justify-center text-white text-xs"
+                        :class="
+                          selectedTestResult.result.frontendSim.steps.step3?.success
+                            ? 'bg-green-500'
+                            : selectedTestResult.result.frontendSim.steps.step2?.success
+                            ? 'bg-red-500'
+                            : 'bg-gray-400'
+                        "
+                      >
+                        3
+                      </span>
+                      <span class="font-medium">{{ selectedTestResult.result.frontendSim.steps.step3?.name || "验证上传结果" }}</span>
+                      <span
+                        v-if="selectedTestResult.result.frontendSim.steps.step2?.success"
+                        class="ml-auto"
+                        :class="selectedTestResult.result.frontendSim.steps.step3?.success ? 'text-green-500' : 'text-red-500'"
+                      >
+                        <IconCheck v-if="selectedTestResult.result.frontendSim.steps.step3?.success" class="h-4 w-4" />
+                        <IconClose v-else class="h-4 w-4" />
+                      </span>
+                    </div>
+                    <!-- 步骤3详情 -->
+                    <div v-if="selectedTestResult.result.frontendSim.steps.step3?.success" class="mt-1 text-xs pl-6 grid grid-cols-2 gap-1">
+                      <div class="text-gray-500 dark:text-gray-400">验证耗时:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step3.duration }}ms</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">文件大小:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step3.fileSize }} 字节</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">内容类型:</div>
+                      <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.steps.step3.contentType }}</div>
+
+                      <div class="text-gray-500 dark:text-gray-400">文件清理:</div>
+                      <div :class="selectedTestResult.result.frontendSim.steps.step3.fileCleaned ? 'text-green-600 dark:text-green-400' : 'text-yellow-600 dark:text-yellow-400'">
+                        {{ selectedTestResult.result.frontendSim.steps.step3.fileCleaned ? "已清理" : "清理失败" }}
+                      </div>
+                    </div>
+                    <!-- 验证错误 -->
+                    <div v-else-if="selectedTestResult.result.frontendSim.steps.step2?.success" class="mt-1 text-xs pl-6 text-red-600 dark:text-red-400">
+                      <div v-if="selectedTestResult.result.frontendSim.steps.step3?.error" class="bg-red-50 dark:bg-red-900/20 p-1 rounded max-h-16 overflow-auto">
+                        {{ selectedTestResult.result.frontendSim.steps.step3.error }}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 整体错误信息 -->
+                <div v-if="selectedTestResult.result?.frontendSim?.error" class="mt-2 text-red-600 dark:text-red-400">
+                  <div class="font-medium text-xs">错误信息:</div>
+                  <div class="bg-red-50 dark:bg-red-900/20 p-1 rounded mt-0.5 text-xs max-h-20 overflow-auto">
+                    {{ selectedTestResult.result.frontendSim.error }}
+                    <div v-if="selectedTestResult.result.frontendSim.failedAt" class="mt-1 font-medium">失败阶段: {{ selectedTestResult.result.frontendSim.failedAt }}</div>
+                  </div>
+                </div>
+
+                <!-- 总体测试信息 -->
+                <div v-if="selectedTestResult.result?.frontendSim?.success" class="mt-2 text-xs pl-5">
+                  <div class="grid grid-cols-2 gap-1">
+                    <div class="text-gray-500 dark:text-gray-400">总耗时:</div>
+                    <div class="text-gray-900 dark:text-gray-200">{{ selectedTestResult.result.frontendSim.totalDuration }}ms</div>
+
+                    <div class="text-gray-500 dark:text-gray-400">测试文件:</div>
+                    <div class="text-gray-900 dark:text-gray-200 truncate" :title="selectedTestResult.result.frontendSim.testFile">
+                      {{ selectedTestResult.result.frontendSim.testFile }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="p-3 sm:p-4 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+          <button
+            @click="showTestDetails = false"
+            class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded hover:bg-gray-200 dark:hover:bg-gray-600 text-sm"
+          >
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 确认对话框 -->
+    <ConfirmDialog
+      v-bind="dialogState"
+      @confirm="handleConfirm"
+      @cancel="handleCancel"
+    />
+  </div>
+</template>
+
+<style scoped>
+.grid-cols-1 {
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+}
+
+@media (min-width: 640px) {
+  .sm\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .lg\:grid-cols-2 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* 添加对长URL的支持 */
+.break-all {
+  word-break: break-all;
+}
+
+.overflow-wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-wrap: break-word; /* 兼容旧浏览器 */
+  -ms-word-break: break-all; /* 兼容IE */
+  word-break: break-word; /* 更现代的属性，尽量在合适的位置换行 */
+  hyphens: auto; /* 在必要时添加连字符 */
+}
+
+/* URL显示增强 */
+.url-display {
+  max-width: calc(100% - 80px); /* 为展开/收起按钮留出空间 */
+  vertical-align: middle;
+  transition: all 0.2s ease;
+  padding: 0.125rem 0.25rem;
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 0.25rem;
+  border-left: 2px solid rgba(59, 130, 246, 0.5);
+  margin-left: 0.25rem;
+}
+
+.url-display:not(.whitespace-nowrap) {
+  white-space: normal;
+  word-break: break-all;
+  max-height: 5rem;
+  overflow-y: auto;
+}
+
+/* 暗黑模式下的URL样式 */
+:deep(.dark .url-display) {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-left-color: rgba(59, 130, 246, 0.7);
+}
+
+/* 连接信息项目样式 */
+.connection-info-item {
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed rgba(128, 128, 128, 0.2);
+}
+
+.connection-info-item:last-child {
+  border-bottom: none;
+}
+
+/* 终端节点URL特殊样式 */
+.endpoint-url {
+  font-family: monospace;
+  padding: 0.25rem 0.5rem;
+  background-color: rgba(0, 0, 0, 0.03);
+  border-radius: 0.25rem;
+  margin-top: 0.125rem;
+  border-left: 2px solid rgba(59, 130, 246, 0.5);
+}
+
+/* 暗黑模式下的终端节点样式 */
+:deep(.dark .endpoint-url),
+.dark .endpoint-url {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-left-color: rgba(59, 130, 246, 0.7);
+}
+
+/* 确保连接信息模态框的宽度适合内容 */
+.max-h-20 {
+  max-height: 5rem;
+}
+
+.max-h-16 {
+  max-height: 4rem;
+}
+</style>

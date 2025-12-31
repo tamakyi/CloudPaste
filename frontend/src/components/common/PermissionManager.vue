@@ -9,18 +9,12 @@
       "
     >
       <div class="flex items-center">
-        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            stroke-width="2"
-            :d="
-              isApiKeyUserWithoutPermission
-                ? 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z'
-                : 'M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'
-            "
-          />
-        </svg>
+        <component
+          :is="isApiKeyUserWithoutPermission ? IconExclamation : IconInformationCircle"
+          size="md"
+          class="mr-2"
+          aria-hidden="true"
+        />
         <span v-if="isApiKeyUserWithoutPermission">
           {{ $t("common.noPermission") }}
         </span>
@@ -35,8 +29,10 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, onMounted } from "vue";
+import { useEventListener } from "@vueuse/core";
 import { useAuthStore } from "@/stores/authStore.js";
+import { IconExclamation, IconInformationCircle } from "@/components/icons";
 
 // Props
 const props = defineProps({
@@ -66,27 +62,27 @@ const authStore = useAuthStore();
 
 // 从Store获取权限状态的计算属性
 const isAdmin = computed(() => authStore.isAdmin);
-const hasApiKey = computed(() => authStore.authType === "apikey" && !!authStore.apiKey);
-const hasTextPermission = computed(() => authStore.hasTextPermission);
-const hasFilePermission = computed(() => authStore.hasFilePermission);
+const hasApiKey = computed(() => authStore.isKeyUser && !!authStore.apiKey);
+const hasTextPermission = computed(() => authStore.hasTextSharePermission);
+const hasFilePermission = computed(() => authStore.hasFileSharePermission);
 const hasMountPermission = computed(() => authStore.hasMountPermission);
 
 // 根据权限类型动态计算权限状态
 const hasPermission = computed(() => {
   switch (props.permissionType) {
     case "file":
-      return authStore.hasFilePermission;
+      return authStore.hasFileSharePermission;
     case "mount":
       return authStore.hasMountPermission;
     case "text":
     default:
-      return authStore.hasTextPermission;
+      return authStore.hasTextSharePermission;
   }
 });
 
 // 判断是否为已登录但无权限的API密钥用户
 const isApiKeyUserWithoutPermission = computed(() => {
-  return authStore.isAuthenticated && authStore.authType === "apikey" && !hasPermission.value;
+  return authStore.isAuthenticated && authStore.isKeyUser && !hasPermission.value;
 });
 
 // 检查用户权限状态（简化版，主要用于触发事件）
@@ -120,13 +116,9 @@ onMounted(async () => {
   await checkPermissionStatus();
 
   // 监听认证状态变化事件
-  window.addEventListener("auth-state-changed", handleAuthStateChange);
+  useEventListener(window, "auth-state-changed", handleAuthStateChange);
 });
 
-// 组件卸载
-onUnmounted(() => {
-  window.removeEventListener("auth-state-changed", handleAuthStateChange);
-});
 
 // 暴露方法和状态
 defineExpose({

@@ -3,23 +3,29 @@
  * 文件业务逻辑，通过Repository访问数据
  */
 
-import { generatePresignedUrl } from "../utils/s3Utils.js";
-import { FileRepository, S3ConfigRepository } from "../repositories/index.js";
-import { StorageConfigUtils } from "../storage/utils/StorageConfigUtils.js";
-import { StorageFactory } from "../storage/factory/StorageFactory.js";
+import { FileRepository } from "../repositories/index.js";
 import { GetFileType, getFileTypeName } from "../utils/fileTypeDetector.js";
+import { generateUniqueFileSlug, validateSlugFormat } from "../utils/common.js";
+import { hashPassword } from "../utils/crypto.js";
+import { ApiStatus, DbTables, UserType } from "../constants/index.js";
+import { ValidationError, NotFoundError, AuthorizationError, ConflictError } from "../http/errors.js";
+import { ensureRepositoryFactory } from "../utils/repositories.js";
+import { ObjectStore } from "../storage/object/ObjectStore.js";
+import { LinkService } from "../storage/link/LinkService.js";
+import { resolvePreviewSelection } from "./documentPreviewService.js";
 
 export class FileService {
   /**
    * 构造函数
    * @param {D1Database} db - 数据库实例
    * @param {string} encryptionSecret - 加密密钥
+   * @param {Object} repositoryFactory - 仓储工厂（可选）
    */
-  constructor(db, encryptionSecret) {
+  constructor(db, encryptionSecret, repositoryFactory = null) {
     this.db = db;
     this.encryptionSecret = encryptionSecret;
+    this.repositoryFactory = ensureRepositoryFactory(db, repositoryFactory);
     this.fileRepository = new FileRepository(db);
-    this.s3ConfigRepository = new S3ConfigRepository(db);
   }
 
   /**
@@ -52,35 +58,20 @@ export class FileService {
   }
 
   /**
-   * 根据文件信息获取存储驱动
-   * @param {Object} file - 文件对象
-   * @returns {Promise<Object>} 存储驱动实例
-   */
-  async getStorageDriver(file) {
-    // 获取存储配置
-    const config = await StorageConfigUtils.getStorageConfig(this.db, file.storage_type, file.storage_config_id);
-
-    // 创建存储驱动
-    const driver = await StorageFactory.createDriver(file.storage_type, config, this.encryptionSecret);
-
-    return driver;
-  }
-
-  /**
    * 根据slug获取文件完整信息
    * @param {string} slug - 文件slug
    * @returns {Promise<Object>} 文件对象
-   * @throws {Error} 如果文件不存在
+   * @throws {ValidationError|NotFoundError}
    */
   async getFileBySlug(slug) {
     if (!slug) {
-      throw new Error("缺少文件slug参数");
+      throw new ValidationError("缺少文件slug参数");
     }
 
     const file = await this.fileRepository.findBySlugWithStorageConfig(slug);
 
     if (!file) {
-      throw new Error("文件不存在");
+      throw new NotFoundError("文件不存在");
     }
 
     return file;
@@ -119,84 +110,109 @@ export class FileService {
     };
   }
 
+
   /**
-   * 生成文件下载URL
-   * @param {Object} file - 文件对象
-   * @param {string} encryptionSecret - 加密密钥
-   * @param {Request} request - 原始请求对象，用于获取当前域名
-   * @returns {Promise<Object>} 包含预览链接和下载链接的对象
+   * 分享层统一 guard：
+   * - 根据 slug 获取文件记录
+   * - 校验过期/最大访问次数
+   * - 在需要时递增 views 并处理过期删除
+   * - 可选择是否在本次调用中递增 views
+   * @param {string} slug
+   * @param {Object} [options]
+   * @param {boolean} [options.incrementViews] 是否在本次调用中递增浏览次数
+   * @returns {Promise<{ file: any, isExpired: boolean }>}
    */
-  async generateFileDownloadUrl(file, encryptionSecret, request = null) {
-    let previewUrl = file.s3_url; // 默认使用原始URL作为回退
-    let downloadUrl = file.s3_url; // 默认使用原始URL作为回退
+  async guardShareFile(slug, options = {}) {
+    const { incrementViews = false } = options;
 
-    // 获取当前域名作为基础URL
-    let baseUrl = "";
-    if (request) {
-      try {
-        const url = new URL(request.url);
-        baseUrl = url.origin; // 包含协议和域名，如 https://example.com
-      } catch (error) {
-        console.error("解析请求URL出错:", error);
-        // 如果解析失败，baseUrl保持为空字符串
-      }
+    // 统一获取文件记录
+    const file = await this.getFileBySlug(slug);
+
+    if (!incrementViews) {
+      const accessResult = this.validateFileAccess(file);
+      return {
+        file,
+        isExpired: !accessResult.accessible,
+      };
     }
 
-    // 构建代理URL，确保使用完整的绝对URL
-    let proxyPreviewUrl = baseUrl ? `${baseUrl}/api/file-view/${file.slug}` : `/api/file-view/${file.slug}`;
-    let proxyDownloadUrl = baseUrl ? `${baseUrl}/api/file-download/${file.slug}` : `/api/file-download/${file.slug}`;
-
-    // 根据存储类型生成预览和下载URL
-    if (file.storage_config_id && file.storage_path && file.storage_type) {
-      if (file.storage_type === "S3") {
-        const s3Config = await this.s3ConfigRepository.findById(file.storage_config_id);
-        if (s3Config) {
-          try {
-            // 生成预览URL，使用S3配置的默认时效
-            // 注意：文件分享页面没有用户上下文，禁用缓存避免权限泄露
-            previewUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, null, false, null, { enableCache: false });
-
-            // 生成下载URL，使用S3配置的默认时效，强制下载
-            downloadUrl = await generatePresignedUrl(s3Config, file.storage_path, encryptionSecret, null, true, null, { enableCache: false });
-          } catch (error) {
-            console.error("生成预签名URL错误:", error);
-            // 如果生成预签名URL失败，回退到使用原始S3 URL
-          }
-        }
-      }
-      // 未来可以在这里添加其他存储类型的处理逻辑
-      // else if (file.storage_type === "WebDAV") {
-      //   // WebDAV存储类型的URL生成逻辑
-      // }
-    }
-
-    return {
-      previewUrl,
-      downloadUrl,
-      proxyPreviewUrl,
-      proxyDownloadUrl,
-      use_proxy: file.use_proxy || 0,
-    };
+    // 需要递增视图时复用 incrementAndCheckFileViews 的逻辑
+    return await this.incrementAndCheckFileViews(slug);
   }
 
   /**
-   * 获取文件的公开信息
+   * 获取文件的公开信息（分享视图 JSON）
+   * - 统一返回语义明确的 previewUrl / downloadUrl
+   * - previewUrl：inline 语义入口（直链 / url_proxy / 本地 /api/s）
+   * - downloadUrl：attachment 语义入口（直链下载 / url_proxy 下载 / 本地 /api/s?down=true）
    * @param {Object} file - 文件对象
    * @param {boolean} requiresPassword - 是否需要密码
-   * @param {Object} urlsObj - URL对象
+   * @param {import("../storage/link/LinkTypes.js").StorageLink|null} link - 由 LinkService 生成的 StorageLink
+   * @param {{ baseOrigin?: string }=} options - 额外选项（如当前请求的后端 Origin）
    * @returns {Promise<Object>} 公开文件信息
    */
-  async getPublicFileInfo(file, requiresPassword, urlsObj = null) {
-    // 确定使用哪种URL
-    const useProxy = urlsObj?.use_proxy !== undefined ? urlsObj.use_proxy : file.use_proxy || 0;
-
-    // 根据是否使用代理选择URL
-    const effectivePreviewUrl = useProxy === 1 ? urlsObj?.proxyPreviewUrl : urlsObj?.previewUrl || file.s3_url;
-    const effectiveDownloadUrl = useProxy === 1 ? urlsObj?.proxyDownloadUrl : urlsObj?.downloadUrl || file.s3_url;
-
-    // 获取文件类型
+  async getPublicFileInfo(file, requiresPassword, link = null, options = {}) {
+    // 获取文件类型（用于前端预览类型判断）
     const fileType = await GetFileType(file.filename, this.db);
     const fileTypeName = await getFileTypeName(file.filename, this.db);
+
+    const useProxyFlag = file.use_proxy ?? 0;
+    const storageUrlProxy = file.url_proxy || null;
+
+    const baseOrigin = options.baseOrigin || null;
+
+    // LinkService 已经根据 use_proxy / url_proxy / 直链能力生成了预览入口（link）
+    const previewLink = link;
+    let previewUrl = previewLink && previewLink.url ? previewLink.url : null;
+
+    // 下载入口
+    const linkService = new LinkService(this.db, this.encryptionSecret, this.repositoryFactory);
+    const downloadLink = await linkService.getShareExternalLink(file, null, { forceDownload: true });
+    let downloadUrl = downloadLink && downloadLink.url ? downloadLink.url : null;
+
+    let linkType = "proxy";
+    if (useProxyFlag) {
+      linkType = "proxy";
+    } else if (storageUrlProxy && previewUrl) {
+      linkType = "url_proxy";
+    } else if (previewLink && previewLink.kind === "direct" && previewUrl) {
+      linkType = "direct";
+    } else if (previewUrl) {
+      linkType = "proxy";
+    } else {
+      linkType = "direct";
+    }
+
+    // 若提供了 baseOrigin，则仅对本地相对路径补全为绝对 URL
+    if (previewUrl && baseOrigin && previewUrl.startsWith("/")) {
+      previewUrl = `${baseOrigin}${previewUrl}`;
+    }
+    if (downloadUrl && baseOrigin && downloadUrl.startsWith("/")) {
+      downloadUrl = `${baseOrigin}${downloadUrl}`;
+    }
+
+    // 受密码保护且未校验通过：不在 JSON 中暴露任何可直接访问的 URL
+    if (requiresPassword) {
+      previewUrl = null;
+      downloadUrl = null;
+    }
+
+    // 基于文件信息和 Link JSON 生成预览选择结果（preview_providers 驱动）
+    const previewSelection = await resolvePreviewSelection(
+      {
+        type: fileType,
+        typeName: fileTypeName,
+        mimetype: file.mimetype,
+        filename: file.filename,
+        size: file.size,
+      },
+      {
+        previewUrl,
+        downloadUrl,
+        linkType,
+        use_proxy: useProxyFlag,
+      },
+    );
 
     return {
       id: file.id,
@@ -210,16 +226,14 @@ export class FileService {
       views: file.views,
       max_views: file.max_views,
       expires_at: file.expires_at,
-      previewUrl: effectivePreviewUrl,
-      downloadUrl: effectiveDownloadUrl,
-      s3_direct_preview_url: urlsObj?.previewUrl || file.s3_url,
-      s3_direct_download_url: urlsObj?.downloadUrl || file.s3_url,
-      proxy_preview_url: urlsObj?.proxyPreviewUrl,
-      proxy_download_url: urlsObj?.proxyDownloadUrl,
-      use_proxy: useProxy,
+      previewUrl,
+      downloadUrl,
+      linkType,
+      use_proxy: useProxyFlag,
       created_by: file.created_by || null,
       type: fileType, // 整数类型常量 (0-6)
       typeName: fileTypeName, // 类型名称（用于调试）
+      previewSelection,
     };
   }
 
@@ -251,6 +265,146 @@ export class FileService {
    */
   async updateFileRecord(fileId, updateData) {
     return await this.fileRepository.updateFile(fileId, updateData);
+  }
+
+  /**
+   * 更新文件元数据（业务逻辑层）
+   * @param {string} fileId - 文件ID
+   * @param {Object} updateData - 更新数据
+   * @param {Object} userInfo - 用户信息
+   * @param {string} userInfo.userType - 用户类型 ("admin" | "apikey")
+   * @param {string} userInfo.userId - 用户ID
+   * @returns {Promise<Object>} 更新结果
+   */
+  async updateFile(fileId, updateData, userInfo) {
+    const { userType, userId } = userInfo;
+
+    // 检查文件是否存在并验证权限
+    let existingFile;
+    if (userType === UserType.ADMIN) {
+      // 管理员：可以更新任何文件
+      existingFile = await this.fileRepository.findById(fileId);
+      if (!existingFile) {
+        throw new NotFoundError("文件不存在");
+      }
+    } else {
+      // API密钥用户：只能更新自己的文件
+      existingFile = await this.fileRepository.findOne(DbTables.FILES, {
+        id: fileId,
+        created_by: `apikey:${userId}`,
+      });
+      if (!existingFile) {
+        throw new NotFoundError("文件不存在或无权更新");
+      }
+    }
+
+    // 构建更新数据对象
+    const finalUpdateData = {};
+
+    // 处理可更新的字段
+    if (updateData.remark !== undefined) {
+      finalUpdateData.remark = updateData.remark;
+    }
+
+    // 处理 slug 更新（包含格式校验和冲突检查）
+    if (updateData.slug !== undefined) {
+      if (!updateData.slug) {
+        finalUpdateData.slug = await generateUniqueFileSlug(this.db, null, false, null);
+      } else {
+        await this._validateAndProcessSlug(updateData.slug, fileId, userType);
+        finalUpdateData.slug = updateData.slug;
+      }
+    }
+
+    // 处理过期时间
+    if (updateData.expires_at !== undefined) {
+      finalUpdateData.expires_at = updateData.expires_at;
+    }
+
+    // 处理Worker代理访问设置
+    if (updateData.use_proxy !== undefined) {
+      finalUpdateData.use_proxy = updateData.use_proxy ? 1 : 0;
+    }
+
+    // 处理最大查看次数
+    if (updateData.max_views !== undefined) {
+      finalUpdateData.max_views = updateData.max_views;
+      finalUpdateData.views = 0; // 当修改max_views时，重置views计数为0
+    }
+
+    // 处理密码变更
+    if (updateData.password !== undefined) {
+      await this._processPasswordUpdate(fileId, updateData.password, finalUpdateData);
+    }
+
+    // 如果没有要更新的字段（API密钥用户需要检查）
+    if (userType === UserType.API_KEY && Object.keys(finalUpdateData).length === 0) {
+      throw new ValidationError("没有提供有效的更新字段");
+    }
+
+    // 添加更新时间
+    finalUpdateData.updated_at = new Date().toISOString();
+
+    // 使用 Repository 更新文件
+    await this.fileRepository.updateFile(fileId, finalUpdateData);
+
+    return {
+      success: true,
+      message: "文件元数据更新成功",
+      slug: finalUpdateData.slug ?? existingFile.slug,
+    };
+  }
+
+  /**
+   * 验证并处理 slug 更新
+   * @private
+   * @param {string} slug - 新的 slug
+   * @param {string} fileId - 文件ID
+   * @param {string} userType - 用户类型
+   */
+  async _validateAndProcessSlug(slug, fileId, userType) {
+    // 格式校验：只允许字母、数字、连字符、下划线、点号
+    if (slug && !validateSlugFormat(slug)) {
+      throw new ValidationError("链接后缀格式无效，只能使用字母、数字、下划线、横杠和点号");
+    }
+
+    // 检查slug是否可用 (不与其他文件冲突)
+    let slugExistsCheck;
+    if (userType === UserType.ADMIN) {
+      slugExistsCheck = await this.fileRepository.findBySlug(slug);
+      if (slugExistsCheck && slugExistsCheck.id !== fileId) {
+        throw new ConflictError("此链接后缀已被其他文件使用");
+      }
+    } else {
+      slugExistsCheck = await this.fileRepository.findBySlugExcludingId(slug, fileId);
+      if (slugExistsCheck) {
+        throw new ConflictError("此链接后缀已被其他文件使用");
+      }
+    }
+  }
+
+  /**
+   * 处理密码更新
+   * @private
+   * @param {string} fileId - 文件ID
+   * @param {string} password - 新密码（可能为空字符串表示清除）
+   * @param {Object} updateData - 更新数据对象（引用传递）
+   */
+  async _processPasswordUpdate(fileId, password, updateData) {
+    if (password) {
+      // 设置新密码
+      const passwordHash = await hashPassword(password);
+      updateData.password = passwordHash;
+
+      // 使用 FileRepository 更新或插入明文密码
+      await this.fileRepository.upsertFilePasswordRecord(fileId, password);
+    } else {
+      // 明确提供了空密码，表示要清除密码
+      updateData.password = null;
+
+      // 使用 FileRepository 删除明文密码记录
+      await this.fileRepository.deleteFilePasswordRecord(fileId);
+    }
   }
 
   /**
@@ -315,24 +469,24 @@ export class FileService {
    * @param {Object} request - 请求对象
    * @returns {Promise<Object>} 文件详情
    */
-  async getAdminFileDetail(fileId, encryptionSecret, request = null) {
-    // 获取文件详情
+  async getAdminFileDetail(fileId, encryptionSecret, request = null, options = {}) {
+    const { includeLinks = false } = options || {};
+
     const file = await this.fileRepository.findByIdWithStorageConfig(fileId);
     if (!file) {
-      throw new Error("文件不存在");
+      throw new NotFoundError("文件不存在");
     }
 
-    // 生成文件下载URL
-    const urlsObj = await this.generateFileDownloadUrl(file, encryptionSecret, request);
+    const fileType = await GetFileType(file.filename, this.db);
+    const fileTypeName = await getFileTypeName(file.filename, this.db);
 
-    // 构建响应
     const result = {
       ...file,
-      has_password: file.password ? true : false,
-      urls: urlsObj,
+      has_password: !!file.password,
+      type: fileType,
+      typeName: fileTypeName,
     };
 
-    // 如果文件有密码保护，获取明文密码
     if (file.password) {
       const passwordInfo = await this.fileRepository.getFilePassword(file.id);
       if (passwordInfo && passwordInfo.plain_password) {
@@ -340,7 +494,6 @@ export class FileService {
       }
     }
 
-    // 处理API密钥名称
     if (result.created_by && result.created_by.startsWith("apikey:")) {
       const keyId = result.created_by.substring(7);
       const keyInfo = await this.getApiKeyInfo(keyId);
@@ -348,6 +501,97 @@ export class FileService {
         result.key_name = keyInfo.name;
       }
     }
+
+    if (!includeLinks) {
+      return result;
+    }
+
+    const linkService = new LinkService(this.db, encryptionSecret, this.repositoryFactory);
+    const previewLink = await linkService.getShareExternalLink(file, null, {
+      forceDownload: false,
+      request,
+    });
+    const downloadLink = await linkService.getShareExternalLink(file, null, {
+      forceDownload: true,
+      request,
+    });
+
+    let previewUrl = previewLink && previewLink.url ? previewLink.url : null;
+    let downloadUrl = downloadLink && downloadLink.url ? downloadLink.url : null;
+
+    // 管理端 include=links 场景：若存储无直链/无 url_proxy 导致外部入口为空，
+    // 为保证文件管理可预览/可下载，回退为本地 share 代理链路。
+    let usedFallback = false;
+    if (file.slug) {
+      if (!previewUrl) {
+        previewUrl = `/api/s/${file.slug}`;
+        usedFallback = true;
+      }
+      if (!downloadUrl) {
+        downloadUrl = `/api/s/${file.slug}?down=true`;
+        usedFallback = true;
+      }
+    }
+
+    const useProxyFlag = file.use_proxy ?? 0;
+    const storageUrlProxy = file.url_proxy || null;
+
+    let linkType = "proxy";
+    if (useProxyFlag) {
+      linkType = "proxy";
+    } else if (storageUrlProxy && previewUrl) {
+      linkType = "url_proxy";
+    } else if (previewLink && previewLink.kind === "direct" && previewUrl) {
+      linkType = "direct";
+    } else if (previewUrl) {
+      linkType = "proxy";
+    } else {
+      linkType = "direct";
+    }
+
+    if (usedFallback) {
+      linkType = "proxy";
+    }
+
+    if (usedFallback) {
+      linkType = "proxy";
+    }
+
+    if (request) {
+      try {
+        const base = new URL(request.url);
+        const origin = `${base.protocol}//${base.host}`;
+        if (previewUrl && previewUrl.startsWith("/")) {
+          previewUrl = new URL(previewUrl, origin).toString();
+        }
+        if (downloadUrl && downloadUrl.startsWith("/")) {
+          downloadUrl = new URL(downloadUrl, origin).toString();
+        }
+      } catch (e) {
+        console.warn("构建文件详情绝对 URL 失败，将返回原始链接：", e?.message || e);
+      }
+    }
+
+    const previewSelection = await resolvePreviewSelection(
+      {
+        type: fileType,
+        typeName: fileTypeName,
+        mimetype: file.mimetype,
+        filename: file.filename,
+        size: file.size,
+      },
+      {
+        previewUrl,
+        downloadUrl,
+        linkType,
+        use_proxy: useProxyFlag,
+      },
+    );
+
+    result.previewUrl = previewUrl;
+    result.downloadUrl = downloadUrl;
+    result.linkType = linkType;
+    result.previewSelection = previewSelection;
 
     return result;
   }
@@ -481,29 +725,28 @@ export class FileService {
    * @param {Object} request - 请求对象
    * @returns {Promise<Object>} 文件详情
    */
-  async getUserFileDetail(fileId, apiKeyId, encryptionSecret, request = null) {
-    // 获取文件详情
+  async getUserFileDetail(fileId, apiKeyId, encryptionSecret, request = null, options = {}) {
+    const { includeLinks = false } = options || {};
+
     const file = await this.fileRepository.findByIdWithStorageConfig(fileId);
     if (!file) {
-      throw new Error("文件不存在");
+      throw new NotFoundError("文件不存在");
     }
 
-    // 检查权限：确保文件属于该API密钥用户
     if (file.created_by !== `apikey:${apiKeyId}`) {
-      throw new Error("没有权限查看此文件");
+      throw new AuthorizationError("没有权限查看此文件");
     }
 
-    // 生成文件下载URL
-    const urlsObj = await this.generateFileDownloadUrl(file, encryptionSecret, request);
+    const fileType = await GetFileType(file.filename, this.db);
+    const fileTypeName = await getFileTypeName(file.filename, this.db);
 
-    // 构建响应
     const result = {
       ...file,
-      has_password: file.password ? true : false,
-      urls: urlsObj,
+      has_password: !!file.password,
+      type: fileType,
+      typeName: fileTypeName,
     };
 
-    // 如果文件有密码保护，获取明文密码
     if (file.password) {
       const passwordInfo = await this.fileRepository.getFilePassword(file.id);
       if (passwordInfo && passwordInfo.plain_password) {
@@ -511,11 +754,98 @@ export class FileService {
       }
     }
 
+    if (!includeLinks) {
+      return result;
+    }
+
+    const linkService = new LinkService(this.db, encryptionSecret, this.repositoryFactory);
+    const previewLink = await linkService.getShareExternalLink(file, null, {
+      forceDownload: false,
+      request,
+    });
+    const downloadLink = await linkService.getShareExternalLink(file, null, {
+      forceDownload: true,
+      request,
+    });
+
+    let previewUrl = previewLink && previewLink.url ? previewLink.url : null;
+    let downloadUrl = downloadLink && downloadLink.url ? downloadLink.url : null;
+
+    // include=links 场景：若存储无直链/无 url_proxy 能力导致入口为空，回退本地 share 代理链路
+    // 该回退仅用于受控的文件管理视图，确保 API Key 用户也能预览/下载自己的文件
+    let usedFallback = false;
+    if (file.slug) {
+      if (!previewUrl) {
+        previewUrl = `/api/s/${file.slug}`;
+        usedFallback = true;
+      }
+      if (!downloadUrl) {
+        downloadUrl = `/api/s/${file.slug}?down=true`;
+        usedFallback = true;
+      }
+    }
+
+    const useProxyFlag = file.use_proxy ?? 0;
+    const storageUrlProxy = file.url_proxy || null;
+
+    let linkType = "proxy";
+    if (useProxyFlag) {
+      linkType = "proxy";
+    } else if (storageUrlProxy && previewUrl) {
+      linkType = "url_proxy";
+    } else if (previewLink && previewLink.kind === "direct" && previewUrl) {
+      linkType = "direct";
+    } else if (previewUrl) {
+      linkType = "proxy";
+    } else {
+      linkType = "direct";
+    }
+
+    if (usedFallback) {
+      linkType = "proxy";
+    }
+
+    if (request) {
+      try {
+        const base = new URL(request.url);
+        const origin = `${base.protocol}//${base.host}`;
+        if (previewUrl && previewUrl.startsWith("/")) {
+          previewUrl = new URL(previewUrl, origin).toString();
+        }
+        if (downloadUrl && downloadUrl.startsWith("/")) {
+          downloadUrl = new URL(downloadUrl, origin).toString();
+        }
+      } catch (e) {
+        console.warn("构建文件详情绝对 URL 失败，将返回原始链接：", e?.message || e);
+      }
+    }
+
+    const previewSelection = await resolvePreviewSelection(
+      {
+        type: fileType,
+        typeName: fileTypeName,
+        mimetype: file.mimetype,
+        filename: file.filename,
+        size: file.size,
+      },
+      {
+        previewUrl,
+        downloadUrl,
+        linkType,
+        use_proxy: useProxyFlag,
+      },
+    );
+
+    result.previewUrl = previewUrl;
+    result.downloadUrl = downloadUrl;
+    result.linkType = linkType;
+    result.previewSelection = previewSelection;
+
     return result;
   }
 }
 
-// 为了保持向后兼容，导出一些静态方法
+// 静态便捷方法（供路由直接调用）
 export async function getFileBySlug(db, slug, encryptionSecret) {
   const fileService = new FileService(db, encryptionSecret);
   return await fileService.getFileBySlug(slug);
@@ -531,15 +861,21 @@ export async function incrementAndCheckFileViews(db, file, encryptionSecret) {
   return await fileService.incrementAndCheckFileViews(file.slug);
 }
 
-export async function generateFileDownloadUrl(db, file, encryptionSecret, request = null) {
+export async function guardShareFile(db, slug, encryptionSecret, options = {}) {
   const fileService = new FileService(db, encryptionSecret);
-  return await fileService.generateFileDownloadUrl(file, encryptionSecret, request);
+  return await fileService.guardShareFile(slug, options);
 }
 
-export async function getPublicFileInfo(file, requiresPassword, urlsObj = null) {
-  // 使用类方法，避免代码重复
-  const fileService = new FileService(null);
-  return await fileService.getPublicFileInfo(file, requiresPassword, urlsObj);
+export async function getPublicFileInfo(
+  db,
+  file,
+  requiresPassword,
+  link = null,
+  encryptionSecret = null,
+  options = {},
+) {
+  const fileService = new FileService(db, encryptionSecret);
+  return await fileService.getPublicFileInfo(file, requiresPassword, link, options);
 }
 
 export async function deleteFileRecordByStoragePath(db, storageConfigId, storagePath, storageType) {
@@ -553,9 +889,9 @@ export async function getAdminFileList(db, options = {}) {
   return await fileService.getAdminFileList(options);
 }
 
-export async function getAdminFileDetail(db, fileId, encryptionSecret, request = null) {
+export async function getAdminFileDetail(db, fileId, encryptionSecret, request = null, options = {}) {
   const fileService = new FileService(db);
-  return await fileService.getAdminFileDetail(fileId, encryptionSecret, request);
+  return await fileService.getAdminFileDetail(fileId, encryptionSecret, request, options);
 }
 
 // 用户文件管理导出函数
@@ -564,7 +900,13 @@ export async function getUserFileList(db, apiKeyId, options = {}) {
   return await fileService.getUserFileList(apiKeyId, options);
 }
 
-export async function getUserFileDetail(db, fileId, apiKeyId, encryptionSecret, request = null) {
+export async function getUserFileDetail(db, fileId, apiKeyId, encryptionSecret, request = null, options = {}) {
   const fileService = new FileService(db);
-  return await fileService.getUserFileDetail(fileId, apiKeyId, encryptionSecret, request);
+  return await fileService.getUserFileDetail(fileId, apiKeyId, encryptionSecret, request, options);
+}
+
+// 文件更新导出函数
+export async function updateFile(db, fileId, updateData, userInfo) {
+  const fileService = new FileService(db);
+  return await fileService.updateFile(fileId, updateData, userInfo);
 }

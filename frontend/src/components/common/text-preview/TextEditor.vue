@@ -4,8 +4,12 @@
     <div ref="editorContainer" class="editor-container">
       <!-- 加载状态覆盖层 -->
       <div v-if="loading" class="loading-overlay">
-        <div class="loading-spinner"></div>
-        <p class="loading-text">{{ $t("textPreview.loadingEditor") }}</p>
+        <LoadingIndicator
+          :text="$t('textPreview.loadingEditor')"
+          :dark-mode="darkMode"
+          size="xl"
+          :icon-class="darkMode ? 'text-primary-500' : 'text-primary-600'"
+        />
       </div>
 
       <!-- 错误状态覆盖层 -->
@@ -30,6 +34,8 @@
 import { ref, onMounted, onBeforeUnmount, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import loader from "@monaco-editor/loader";
+import { formatLocalDateTimeWithSeconds } from "@/utils/timeUtils.js";
+import LoadingIndicator from "@/components/common/LoadingIndicator.vue";
 
 const { t } = useI18n();
 
@@ -118,7 +124,7 @@ const addEditorActions = (editor, monaco) => {
     contextMenuGroupId: "modification",
     contextMenuOrder: 1,
     run: function (ed) {
-      const timestamp = new Date().toLocaleString("zh-CN");
+      const timestamp = formatLocalDateTimeWithSeconds(new Date());
       const selection = ed.getSelection();
       ed.executeEdits("", [
         {
@@ -141,13 +147,7 @@ const addEditorActions = (editor, monaco) => {
       const chars = content.length;
       const words = content.trim() ? content.trim().split(/\s+/).length : 0;
 
-      // 使用更友好的提示方式
-      const message = `行数: ${lines}\n字符数: ${chars}\n单词数: ${words}`;
-      if (window.confirm) {
-        alert(message);
-      } else {
-        console.log("文本统计:", { lines, chars, words });
-      }
+      console.log("文本统计:", { lines, chars, words });
     },
   });
 
@@ -570,15 +570,6 @@ defineExpose({
 
 .text-editor-dark .loading-overlay {
   background-color: rgba(31, 41, 55, 0.9);
-}
-
-.loading-spinner {
-  width: 2rem;
-  height: 2rem;
-  border: 2px solid #e5e7eb;
-  border-top: 2px solid #3b82f6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
 }
 
 .loading-text {

@@ -44,9 +44,7 @@
                     <!-- 第一行：时间信息 -->
                     <div class="text-sm" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
                       <span class="inline-flex items-center gap-1">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                        <IconClock size="sm" class="flex-shrink-0" />
                         {{ formatDate(upload.initiated) }}
                       </span>
                     </div>
@@ -55,9 +53,7 @@
                     <div class="flex items-center gap-3 text-sm flex-wrap" :class="darkMode ? 'text-gray-400' : 'text-gray-500'">
                       <!-- 匹配度 -->
                       <span v-if="showMatchScore" class="inline-flex items-center gap-1">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
+                        <IconCheckbox size="sm" class="flex-shrink-0" />
                         {{ t("common.dialogs.selectUpload.matchScore", { score: getMatchScoreDisplay(upload, index) }) }}
                       </span>
 
@@ -65,17 +61,25 @@
                       <span v-if="showMatchScore" class="text-gray-300 dark:text-gray-600">•</span>
 
                       <!-- 已上传分片数量 -->
-                      <span class="inline-flex items-center gap-1">
-                        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
-                          />
-                        </svg>
-                        {{ getUploadedPartsDisplay(upload) }}
+                      <span class="inline-flex items-center gap-1 flex-wrap">
+                        <IconDocument size="sm" class="flex-shrink-0" />
+                        <span>{{ getUploadedPartsInfo(upload).partsText }}</span>
+                        <span
+                          v-if="getUploadedPartsInfo(upload).progressText"
+                          class="text-xs"
+                          :class="darkMode ? 'text-gray-500' : 'text-gray-400'"
+                        >
+                          · {{ getUploadedPartsInfo(upload).progressText }}
+                        </span>
                       </span>
+
+                      <!-- 失败分片提示（如果有） -->
+                      <template v-if="getPartErrorsCount(upload) > 0">
+                        <span class="text-gray-300 dark:text-gray-600">•</span>
+                        <span class="inline-flex items-center gap-1 text-red-600 dark:text-red-400">
+                          {{ t("common.dialogs.selectUpload.partErrors", { count: getPartErrorsCount(upload) }) }}
+                        </span>
+                      </template>
 
                       <!-- 分隔符和上传ID -->
                       <template v-if="upload.uploadId">
@@ -86,14 +90,7 @@
                           :title="t('common.dialogs.selectUpload.copyIdTooltip', { id: upload.uploadId })"
                         >
                           <span>ID {{ formatUploadId(upload.uploadId) }}</span>
-                          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="2"
-                              d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                            />
-                          </svg>
+                          <IconCopy size="xs" />
                         </button>
                       </template>
                     </div>
@@ -137,8 +134,12 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, onUnmounted } from "vue";
+import { ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { formatDateTimeWithSeconds } from "@/utils/timeUtils.js";
+import { IconCheckbox, IconClock, IconCopy, IconDocument } from "@/components/icons";
+import { useEventListener } from "@vueuse/core";
+import { copyToClipboard } from "@/utils/clipboard";
 
 // 国际化
 const { t } = useI18n();
@@ -190,20 +191,8 @@ watch(
 
 // 格式化日期
 const formatDate = (dateString) => {
-  try {
-    return new Date(dateString).toLocaleString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  } catch (error) {
-    return dateString;
-  }
+  return formatDateTimeWithSeconds(dateString);
 };
-
 // 获取匹配分数显示
 const getMatchScoreDisplay = (upload, index) => {
   //使用 ServerResumePlugin 计算的真实匹配分数
@@ -216,16 +205,51 @@ const getMatchScoreDisplay = (upload, index) => {
   return Math.max(baseScore, 60).toFixed(1);
 };
 
-// 获取已上传分片数量的精确显示
-const getUploadedPartsDisplay = (upload) => {
+// 获取已上传分片数量的精确显示（分离主信息 + 小字进度）
+const getUploadedPartsInfo = (upload) => {
+  const buildProgressText = () => {
+    const totalBytes = Number(upload?.fileSize) || 0;
+    if (!Number.isFinite(totalBytes) || totalBytes <= 0) return "";
+
+    // 进度的“主依据”：
+    // - 优先用 ServerResumePlugin 预先计算好的 bytesUploaded
+    // - 如果没有 bytesUploaded，才用 uploadedParts/parts 的 size 求和兜底
+    let uploadedBytes = Number(upload?.bytesUploaded);
+    if (!Number.isFinite(uploadedBytes) || uploadedBytes < 0) {
+      const parts = Array.isArray(upload?.uploadedParts) ? upload.uploadedParts : upload?.parts;
+      if (!Array.isArray(parts) || parts.length === 0) return "";
+      uploadedBytes = parts.reduce((sum, p) => {
+        const s = Number(p?.size ?? p?.Size ?? 0);
+        if (!Number.isFinite(s) || s <= 0) return sum;
+        return sum + s;
+      }, 0);
+    }
+
+    uploadedBytes = Math.min(Math.max(0, uploadedBytes), totalBytes);
+
+    const uploadedMB = (uploadedBytes / (1024 * 1024)).toFixed(1);
+    const totalMB = (totalBytes / (1024 * 1024)).toFixed(1);
+    const percentage = totalBytes > 0 ? ((uploadedBytes / totalBytes) * 100).toFixed(1) : "0.0";
+    return t("common.dialogs.selectUpload.progressInfo", {
+      percentage,
+      uploaded: uploadedMB,
+      total: totalMB,
+    });
+  };
+
+  const progressText = buildProgressText();
+
   // 1. 优先使用服务器返回的分片信息（最准确）
   if (upload.uploadedParts && Array.isArray(upload.uploadedParts)) {
     const partCount = upload.uploadedParts.length;
     if (partCount > 0) {
-      // 计算总分片数（假设5MB分片大小）
-      const partSize = 5 * 1024 * 1024; // 5MB
+      // 计算总分片数（优先使用服务端返回的 partSize）
+      const partSize = Number(upload.partSize) > 0 ? Number(upload.partSize) : 5 * 1024 * 1024;
       const totalParts = upload.fileSize ? Math.ceil(upload.fileSize / partSize) : "?";
-      return t("common.dialogs.selectUpload.partsInfo", { count: partCount, total: totalParts });
+      return {
+        partsText: t("common.dialogs.selectUpload.partsInfo", { count: partCount, total: totalParts }),
+        progressText,
+      };
     }
   }
 
@@ -233,10 +257,21 @@ const getUploadedPartsDisplay = (upload) => {
   if (upload.parts && Array.isArray(upload.parts)) {
     const partCount = upload.parts.length;
     if (partCount > 0) {
-      const partSize = 5 * 1024 * 1024;
+      const partSize = Number(upload.partSize) > 0 ? Number(upload.partSize) : 5 * 1024 * 1024;
       const totalParts = upload.fileSize ? Math.ceil(upload.fileSize / partSize) : "?";
-      return t("common.dialogs.selectUpload.partsInfo", { count: partCount, total: totalParts });
+      return {
+        partsText: t("common.dialogs.selectUpload.partsInfo", { count: partCount, total: totalParts }),
+        progressText,
+      };
     }
+  }
+
+  // 如果没有分片列表，但后端返回了 bytesUploaded，也给个进度提示
+  if (progressText) {
+    return {
+      partsText: t("common.dialogs.selectUpload.partialComplete"),
+      progressText,
+    };
   }
 
   // 3. 使用进度信息计算
@@ -244,16 +279,31 @@ const getUploadedPartsDisplay = (upload) => {
     const percentage = ((upload.progress.uploadedBytes / upload.progress.totalBytes) * 100).toFixed(1);
     const uploadedMB = (upload.progress.uploadedBytes / (1024 * 1024)).toFixed(1);
     const totalMB = (upload.progress.totalBytes / (1024 * 1024)).toFixed(1);
-    return t("common.dialogs.selectUpload.progressInfo", { percentage, uploaded: uploadedMB, total: totalMB });
+    return {
+      partsText: t("common.dialogs.selectUpload.partialComplete"),
+      progressText: t("common.dialogs.selectUpload.progressInfo", { percentage, uploaded: uploadedMB, total: totalMB }),
+    };
   }
 
   // 4. 使用单个分片编号（不太准确，但总比没有好）
   if (upload.partNumber && typeof upload.partNumber === "number") {
-    return t("common.dialogs.selectUpload.atLeastParts", { count: upload.partNumber });
+    return {
+      partsText: t("common.dialogs.selectUpload.atLeastParts", { count: upload.partNumber }),
+      progressText: "",
+    };
   }
 
   // 5. 默认显示（最不准确）
-  return t("common.dialogs.selectUpload.partialComplete");
+  return {
+    partsText: t("common.dialogs.selectUpload.partialComplete"),
+    progressText: "",
+  };
+};
+
+const getPartErrorsCount = (upload) => {
+  const errors = upload?.partErrors;
+  if (!Array.isArray(errors)) return 0;
+  return errors.length;
 };
 
 // 格式化上传ID显示
@@ -272,21 +322,12 @@ const formatUploadId = (uploadId) => {
 // 制上传ID到剪贴板
 const copyUploadId = async (uploadId) => {
   try {
-    await navigator.clipboard.writeText(uploadId);
+    const success = await copyToClipboard(uploadId);
+    if (!success) {
+      throw new Error("copy_failed");
+    }
   } catch (error) {
     console.error("复制失败:", error);
-    // 降级方案：使用传统的复制方法
-    try {
-      const textArea = document.createElement("textarea");
-      textArea.value = uploadId;
-      document.body.appendChild(textArea);
-      textArea.select();
-      document.execCommand("copy");
-      document.body.removeChild(textArea);
-      console.log("上传ID已复制到剪贴板 (降级方案):", uploadId);
-    } catch (fallbackError) {
-      console.error("降级复制也失败:", fallbackError);
-    }
   }
 };
 
@@ -338,14 +379,8 @@ const handleKeydown = (event) => {
   }
 };
 
-// 生命周期
-onMounted(() => {
-  document.addEventListener("keydown", handleKeydown);
-});
-
-onUnmounted(() => {
-  document.removeEventListener("keydown", handleKeydown);
-});
+// 生命周期：自动注册/清理事件
+useEventListener(document, "keydown", handleKeydown);
 </script>
 
 <style scoped>

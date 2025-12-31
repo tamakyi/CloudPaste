@@ -4,8 +4,11 @@
  * 完整的PWA功能：安装、更新、离线存储、状态管理
  */
 
-import { reactive } from "vue";
-import { showOfflineToast, hideOfflineToast } from "../utils/offlineToast.js";
+import { reactive, watch } from "vue";
+import { useEventListener, useMediaQuery, useOnline } from "@vueuse/core";
+import { showOfflineToast, hideOfflineToast } from "./offlineToast.js";
+
+const OFFLINE_DB_VERSION = 6;
 
 // 获取应用版本号
 const getAppVersion = () => {
@@ -30,7 +33,7 @@ export const pwaState = reactive({
   swState: "unknown", // 'installing', 'waiting', 'active', 'redundant'
 
   // 网络状态
-  isOffline: false,
+  isOffline: typeof navigator !== "undefined" ? !navigator.onLine : false,
 
   // 版本信息
   version: getAppVersion(),
@@ -46,33 +49,15 @@ export const pwaState = reactive({
   // 后台同步状态
   backgroundSyncSupported: false,
   syncInProgress: false,
+  ready: false,
 });
 
 // 离线存储管理
 class OfflineStorage {
   constructor() {
     this.dbName = "CloudPasteOfflineDB";
-    this.version = this.calculateDatabaseVersion(); // 基于APP_VERSION动态计算数据库版本
+    this.version = OFFLINE_DB_VERSION;
     this.db = null;
-  }
-
-  // 基于应用版本动态计算数据库版本
-  calculateDatabaseVersion() {
-    const appVersion = getAppVersion();
-
-    // 将版本号转换为数字，例如 "0.6.8" -> 608
-    const versionParts = appVersion.split(".").map((part) => parseInt(part, 10));
-    const majorVersion = versionParts[0] || 0;
-    const minorVersion = versionParts[1] || 0;
-    const patchVersion = versionParts[2] || 0;
-
-    // 计算数据库版本：主版本*1000 + 次版本*100 + 补丁版本*10 + 基础版本
-    // 例如：0.6.8 -> 0*1000 + 6*100 + 8*10 + 5 = 685
-    const baseVersion = 5; // 当前数据库结构的基础版本
-    const calculatedVersion = majorVersion * 1000 + minorVersion * 100 + patchVersion * 10 + baseVersion;
-
-    console.log(`[PWA] 计算数据库版本: ${appVersion} -> ${calculatedVersion}`);
-    return calculatedVersion;
   }
 
   // 执行数据库迁移策略
@@ -170,26 +155,71 @@ class OfflineStorage {
     }
 
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(this.dbName, this.version);
+      const openDatabase = (useExplicitVersion) => {
+        let request;
 
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        this.db = request.result;
-        resolve(this.db);
+        try {
+          request = useExplicitVersion ? indexedDB.open(this.dbName, this.version) : indexedDB.open(this.dbName);
+        } catch (error) {
+          // 当请求的版本号小于已存在版本时，IndexedDB 可能会同步抛出 VersionError
+          if (useExplicitVersion && error && error.name === "VersionError") {
+            console.warn(
+              "[PWA] 本地离线数据库版本高于当前代码要求，将跳过降级并使用现有版本继续工作"
+            );
+            return openDatabase(false);
+          }
+
+          reject(error);
+          return;
+        }
+
+        request.onerror = () => {
+          const err = request.error;
+          if (useExplicitVersion && err && err.name === "VersionError") {
+            console.warn(
+              "[PWA] 本地离线数据库版本高于当前代码要求，将跳过降级并使用现有版本继续工作"
+            );
+            return openDatabase(false);
+          }
+
+          reject(err);
+        };
+
+        request.onsuccess = () => {
+          this.db = request.result;
+
+          // 如果是使用现有版本打开，可以同步当前实际版本号，方便日志和后续检查
+          try {
+            if (!useExplicitVersion && typeof this.db.version === "number") {
+              this.version = this.db.version;
+              console.log(`[PWA] 使用现有离线数据库版本: ${this.version}`);
+            }
+          } catch {
+            // 仅用于调试，不影响功能
+          }
+
+          resolve(this.db);
+        };
+
+        if (useExplicitVersion) {
+          request.onupgradeneeded = (event) => {
+            const db = event.target.result;
+            const oldVersion = event.oldVersion;
+            const newVersion = event.newVersion;
+
+            console.log(`[PWA] 数据库升级: ${oldVersion} -> ${newVersion}`);
+
+            // 🎯 执行数据库迁移策略
+            this.performDatabaseMigration(db, oldVersion, newVersion);
+
+            console.log("[PWA] 数据库升级完成");
+          };
+        }
       };
 
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        const oldVersion = event.oldVersion;
-        const newVersion = event.newVersion;
-
-        console.log(`[PWA] 数据库升级: ${oldVersion} -> ${newVersion}`);
-
-        // 🎯 执行数据库迁移策略
-        this.performDatabaseMigration(db, oldVersion, newVersion);
-
-        console.log("[PWA] 数据库升级完成");
-      };
+      // 首先尝试使用当前代码声明的版本号打开数据库；
+      // 如果遇到 VersionError，则回退为“使用现有版本”打开，避免降级错误。
+      openDatabase(true);
     });
   }
 
@@ -372,11 +402,11 @@ class OfflineStorage {
             setting.key.startsWith("user_") ||
             setting.key.startsWith("system_") ||
             setting.key.startsWith("test_") ||
-            setting.key.startsWith("s3_config_") ||
+            setting.key.startsWith("storage_config_") ||
             setting.key.startsWith("url_") ||
             setting.key.startsWith("public_file_") ||
             setting.key.startsWith("raw_paste_") ||
-            setting.key === "s3_configs_list" ||
+            setting.key === "storage_configs_list" ||
             setting.key === "url_info_cache"
           ) {
             store.delete(setting.key);
@@ -453,8 +483,11 @@ export const offlineStorage = new OfflineStorage();
 // PWA 管理器类
 class PWAManager {
   constructor() {
-    // 延迟初始化，避免构造函数中调用async函数
-    setTimeout(() => this.init(), 0);
+    this._networkListenersBound = false;
+    this._installPromptListenersBound = false;
+    this._vitePwaEventListenersBound = false;
+    this._supplementaryListenersBound = false;
+    this.readyPromise = this.init();
   }
 
   async init() {
@@ -487,21 +520,27 @@ class PWAManager {
     this.checkBackgroundSyncSupport();
 
     console.log("[PWA] PWA 管理器初始化完成");
+    pwaState.ready = true;
   }
 
   // 网络状态监听 - 集成offlineToast
   setupNetworkListeners() {
-    const updateOnlineStatus = () => {
-      const wasOffline = pwaState.isOffline;
-      pwaState.isOffline = !navigator.onLine;
+    if (this._networkListenersBound) return;
+    this._networkListenersBound = true;
 
-      console.log(`[PWA] 网络状态: ${navigator.onLine ? "在线" : "离线"}`);
+    const online = useOnline();
+
+    const updateOnlineStatus = (isOnlineNow) => {
+      const wasOffline = pwaState.isOffline;
+      pwaState.isOffline = !isOnlineNow;
+
+      console.log(`[PWA] 网络状态: ${isOnlineNow ? "在线" : "离线"}`);
 
       // 集成offlineToast显示用户友好的提示
-      if (!navigator.onLine && !wasOffline) {
+      if (!isOnlineNow && !wasOffline) {
         // 刚刚离线 - 使用国际化文本
         showOfflineToast("您已离线，部分功能可能受限");
-      } else if (navigator.onLine && wasOffline) {
+      } else if (isOnlineNow && wasOffline) {
         // 刚刚恢复在线
         hideOfflineToast();
         showOfflineToast("网络已恢复，正在同步数据...");
@@ -516,9 +555,13 @@ class PWAManager {
       }
     };
 
-    window.addEventListener("online", updateOnlineStatus);
-    window.addEventListener("offline", updateOnlineStatus);
-    updateOnlineStatus();
+    watch(
+      online,
+      (isOnlineNow) => {
+        updateOnlineStatus(isOnlineNow);
+      },
+      { immediate: true }
+    );
   }
 
   // 同步离线数据 - 集成Background Sync API
@@ -632,7 +675,7 @@ class PWAManager {
 
       // 🔐 文件密码验证
       case "verifyFilePassword":
-        return await post(endpoint, data); // /api/public/files/:slug/verify
+        return await post(endpoint, data);
 
       default:
         console.warn(`[PWA] 未知的离线操作类型: ${type}`);
@@ -641,14 +684,17 @@ class PWAManager {
   }
 
   setupInstallPrompt() {
-    window.addEventListener("beforeinstallprompt", (e) => {
+    if (this._installPromptListenersBound) return;
+    this._installPromptListenersBound = true;
+
+    useEventListener(window, "beforeinstallprompt", (e) => {
       e.preventDefault();
       pwaState.deferredPrompt = e;
       pwaState.isInstallable = true;
       console.log("[PWA] 应用可安装");
     });
 
-    window.addEventListener("appinstalled", () => {
+    useEventListener(window, "appinstalled", () => {
       pwaState.isInstalled = true;
       pwaState.isInstallable = false;
       pwaState.deferredPrompt = null;
@@ -658,9 +704,17 @@ class PWAManager {
 
   checkInstallStatus() {
     // 检查是否在独立模式下运行（已安装）
-    if (window.matchMedia("(display-mode: standalone)").matches) {
-      pwaState.isInstalled = true;
-    }
+    if (this._standaloneQueryBound) return;
+    this._standaloneQueryBound = true;
+
+    const isStandalone = useMediaQuery("(display-mode: standalone)");
+    watch(
+      isStandalone,
+      (val) => {
+        pwaState.isInstalled = Boolean(val);
+      },
+      { immediate: true }
+    );
   }
 
   // Service Worker 监听 - 统一使用vite-plugin-pwa标准事件
@@ -670,35 +724,38 @@ class PWAManager {
       return;
     }
 
-    // 🎯 优先使用vite-plugin-pwa标准事件，避免重复监听
+    // 优先使用vite-plugin-pwa标准事件，避免重复监听
     this.setupVitePWAEventListeners();
 
-    // 🎯 仅在必要时添加补充监听，避免与vite-plugin-pwa冲突
+    // 仅在必要时添加补充监听，避免与vite-plugin-pwa冲突
     this.setupSupplementaryListeners();
   }
 
   // 设置vite-plugin-pwa标准事件监听
   setupVitePWAEventListeners() {
+    if (this._vitePwaEventListenersBound) return;
+    this._vitePwaEventListenersBound = true;
+
     // 监听vite-plugin-pwa的标准更新事件
-    window.addEventListener("vite:pwa-update-available", () => {
+    useEventListener(window, "vite:pwa-update-available", () => {
       pwaState.isUpdateAvailable = true;
       console.log("[PWA] 检测到应用更新（vite-plugin-pwa标准事件）");
       this.notifyUpdate();
     });
 
     // 监听vite-plugin-pwa的其他标准事件
-    window.addEventListener("vite:pwa-updated", () => {
+    useEventListener(window, "vite:pwa-updated", () => {
       pwaState.needRefresh = true;
       console.log("[PWA] 应用已更新，需要刷新");
     });
 
-    window.addEventListener("vite:pwa-offline-ready", () => {
+    useEventListener(window, "vite:pwa-offline-ready", () => {
       console.log("[PWA] 应用已准备好离线使用");
       pwaState.cacheStatus = "cached";
     });
 
     // 监听vite-plugin-pwa的错误事件
-    window.addEventListener("vite:pwa-error", (event) => {
+    useEventListener(window, "vite:pwa-error", (event) => {
       console.error("[PWA] vite-plugin-pwa错误:", event.detail);
       pwaState.updateError = event.detail?.message || "PWA更新错误";
     });
@@ -706,21 +763,24 @@ class PWAManager {
 
   // 设置补充监听器（仅在vite-plugin-pwa未覆盖的场景）
   setupSupplementaryListeners() {
-    // 🎯 监听Service Worker消息，包括同步完成通知
-    navigator.serviceWorker.addEventListener("message", (event) => {
+    if (this._supplementaryListenersBound) return;
+    this._supplementaryListenersBound = true;
+
+    // 监听Service Worker消息，包括同步完成通知
+    useEventListener(navigator.serviceWorker, "message", (event) => {
       if (event.data && event.data.type === "SW_UPDATED") {
         // 这是来自自定义Service Worker的消息，vite-plugin-pwa可能未处理
         pwaState.isUpdateAvailable = true;
         console.log("[PWA] 检测到应用更新（Service Worker消息）");
         this.notifyUpdate();
       } else if (event.data && event.data.type === "PWA_SYNC_COMPLETED") {
-        // 🎯 第2层：PWA Manager → 全局事件系统
+        // 第2层：PWA Manager → 全局事件系统
         // 接收Service Worker的同步完成通知并转发为标准事件
         this.handleSyncCompletedMessage(event.data.payload);
       }
     });
 
-    // 🎯 等待Service Worker注册完成，获取registration对象
+    // 等待Service Worker注册完成，获取registration对象
     navigator.serviceWorker.ready
       .then((registration) => {
         pwaState.registration = registration;
@@ -1063,8 +1123,8 @@ export const pwaUtils = {
   state: pwaState,
 
   // 网络状态
-  isOnline: () => navigator.onLine,
-  isOffline: () => !navigator.onLine,
+  isOnline: () => !pwaState.isOffline,
+  isOffline: () => pwaState.isOffline,
 
   // 安装相关
   isInstallable: () => pwaState.isInstallable,
@@ -1121,7 +1181,7 @@ export const pwaUtils = {
     getOfflineQueue: () => offlineStorage.getOfflineQueue(),
     removeFromOfflineQueue: (id) => offlineStorage.removeFromOfflineQueue(id),
 
-    // 🎯 数据库状态检查（调试用）
+    // 数据库状态检查（调试用）
     checkDatabaseStatus: () => offlineStorage.checkDatabaseStatus(),
   },
 };
@@ -1129,25 +1189,22 @@ export const pwaUtils = {
 // 创建PWA管理器实例
 const pwaManager = new PWAManager();
 
-// 初始化完成后绑定真实功能到pwaUtils
-setTimeout(() => {
-  // 绑定安装功能
+const bindManagerFunctions = () => {
   pwaUtils.install = () => pwaManager.installApp();
-
-  // 绑定更新功能
   pwaUtils.update = () => pwaManager.updateApp();
   pwaUtils.checkForUpdate = () => pwaManager.checkForUpdate();
-
-  // 绑定通知功能
   pwaUtils.requestNotificationPermission = () => pwaManager.requestNotificationPermission();
-
-  // 绑定Background Sync功能
   pwaUtils.registerBackgroundSync = (tag) => pwaManager.registerBackgroundSync(tag);
   pwaUtils.getBackgroundSyncStatus = () => pwaManager.getBackgroundSyncStatus();
   pwaUtils.triggerManualSync = (tag) => pwaManager.triggerManualSync(tag);
-
   console.log("[PWA] 功能绑定完成");
-}, 100);
+};
+
+pwaManager.readyPromise
+  .then(bindManagerFunctions)
+  .catch((error) => {
+    console.error("[PWA] 初始化失败，部分PWA功能不可用:", error);
+  });
 
 // 导出实例
 export { pwaManager };

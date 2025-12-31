@@ -6,6 +6,8 @@ export default {
     permissionRequired: "需要管理员权限或有效的API密钥才能创建分享，请",
     loginOrAuth: "登录管理后台或配置API密钥",
     form: {
+      title: "标题",
+      titlePlaceholder: "为这个分享添加标题（可选）",
       remark: "备注",
       remarkPlaceholder: "为这个分享添加备注（可选）",
       customLink: "自定义链接后缀",
@@ -20,6 +22,9 @@ export default {
       expiryMonth: "月后过期",
       maxViews: "最大查看次数",
       maxViewsPlaceholder: "限制查看次数（0为不限制）",
+      visibility: "可见性",
+      publicAccess: "公开",
+      publicAccessHelper: "关闭时仅管理员和创建者可访问",
       createShare: "创建分享",
       creating: "创建中...",
     },
@@ -75,7 +80,7 @@ export default {
       corsImageError: "由于跨域限制，部分图片可能无法正确显示在导出图片中",
     },
     validation: {
-      slugInvalid: "链接后缀只能包含字母、数字、连字符和下划线",
+      slugInvalid: "链接后缀只能包含字母、数字、连字符、下划线和点号",
       slugTooLong: "链接后缀不能超过50个字符",
       slugReserved: "此链接后缀为系统保留，请使用其他后缀",
     },

@@ -11,11 +11,21 @@ import MasonryWall from "@yeger/vue-masonry-wall";
 import "@imengyu/vue3-context-menu/lib/vue3-context-menu.css";
 import ContextMenu from "@imengyu/vue3-context-menu";
 
+// 导入 Notivue（全局提示 / Toast）
+import { createNotivue } from "notivue";
+import "notivue/notification.css";
+import "notivue/notification-progress.css";
+import "notivue/animations.css";
+
 // 导入自定义指令
 import { contextMenuDirective } from "./components/common/contextMenu.js";
 
-// 导入PWA相关模块
-import { pwaManager, pwaUtils } from "./pwa/pwaManager.js";
+// 开发环境：清理旧的 Service Worker
+if (import.meta.env.DEV && "serviceWorker" in navigator) {
+  navigator.serviceWorker.getRegistrations?.().then((registrations) => {
+    registrations.forEach((reg) => reg.unregister());
+  });
+}
 
 // 创建应用实例
 const app = createApp(App);
@@ -87,6 +97,26 @@ app.use(MasonryWall);
 // 挂载vue3-context-menu - 全局注册上下文菜单组件
 app.use(ContextMenu);
 
+// 挂载 Notivue - 全局提示系统（右上角）
+app.use(
+  createNotivue({
+    position: "top-right",
+    limit: 4,
+    enqueue: true,
+    pauseOnHover: true,
+    pauseOnTouch: true,
+    avoidDuplicates: true,
+    notifications: {
+      global: {
+        duration: 2000,
+      },
+      error: {
+        duration: 5000,
+      },
+    },
+  })
+);
+
 // 注册自定义指令
 app.directive("context-menu", contextMenuDirective);
 
@@ -96,6 +126,7 @@ import { useSiteConfigStore } from "./stores/siteConfigStore.js";
 
 // 导入路由工具函数
 import { routerUtils } from "./router";
+import { useLocalStorage } from "@vueuse/core";
 
 // 提供全局 navigateTo 函数，保持向后兼容
 app.config.globalProperties.$navigateTo = routerUtils.navigateTo;
@@ -104,29 +135,46 @@ app.config.globalProperties.$routerUtils = routerUtils;
 // 将API服务挂载到全局对象，方便在组件中使用
 app.config.globalProperties.$api = api;
 
-// 挂载PWA工具到全局对象
-app.config.globalProperties.$pwa = pwaUtils;
-
 // 在开发环境中输出API配置信息
 if (import.meta.env.DEV) {
   console.log("环境信息:", getEnvironmentInfo());
 }
 
-// 初始化完整的PWA功能
-if (pwaManager) {
-  console.log("[PWA] PWA管理器已初始化");
-  console.log("[PWA] 支持功能:", {
-    安装: pwaUtils.isInstallable(),
-    离线存储: !!pwaUtils.storage,
-    版本: pwaUtils.getVersion(),
-    网络状态: pwaUtils.isOnline() ? "在线" : "离线",
-  });
-}
+const scheduleIdle = (fn) => {
+  if (typeof window === "undefined") return;
+  if (typeof window.requestIdleCallback === "function") {
+    window.requestIdleCallback(() => fn(), { timeout: 1500 });
+    return;
+  }
+  setTimeout(fn, 800);
+};
+
+scheduleIdle(async () => {
+  try {
+    const mod = await import("./pwa/pwaManager.js");
+    const { pwaManager, pwaUtils } = mod || {};
+
+    // 挂载 PWA 工具到全局对象
+    app.config.globalProperties.$pwa = pwaUtils;
+
+    if (pwaManager) {
+      console.log("[PWA] PWA管理器已初始化");
+      console.log("[PWA] 支持功能:", {
+        安装: pwaUtils?.isInstallable?.(),
+        离线存储: !!pwaUtils?.storage,
+        版本: pwaUtils?.getVersion?.(),
+        网络状态: pwaUtils?.isOnline?.() ? "在线" : "离线",
+      });
+    }
+  } catch (e) {
+    console.warn("[PWA] 延迟加载失败（不影响页面使用）:", e);
+  }
+});
 
 // 确保加载正确的语言
-const savedLang = localStorage.getItem("language");
-if (savedLang && i18n.global.locale.value !== savedLang) {
-  i18n.global.locale.value = savedLang;
+const savedLang = useLocalStorage("language", i18n.global.locale.value);
+if (savedLang.value && i18n.global.locale.value !== savedLang.value) {
+  i18n.global.locale.value = savedLang.value;
 }
 
 // 挂载应用

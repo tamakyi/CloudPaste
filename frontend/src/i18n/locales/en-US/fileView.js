@@ -19,8 +19,8 @@ export default {
       accessCount: "Access Count",
       expiresAt: "Expires At",
       accessMode: "Access Mode",
-      proxyAccess: "Worker Proxy Access",
-      directAccess: "S3/CDN Direct Access",
+      proxyAccess: "Local Proxy Access",
+      directAccess: "Direct Link/URL Proxy Access",
       limit: "limit",
     },
 
@@ -41,6 +41,7 @@ export default {
     actions: {
       download: "Download File",
       downloadFile: "Download File",
+      updateSuccess: "File information updated successfully",
       downloadFailed: "Download failed",
       downloadExpired: "Download link may have expired, please try refreshing to get a new download link",
       share: "Share Link",
@@ -63,6 +64,15 @@ export default {
       retry: "Retry",
       refresh: "Refresh",
       manualCopy: "Unable to copy automatically, please manually copy the link",
+      copyLink: "Copy Link",
+      copied: "Copied",
+      nativeShare: "Native Share",
+      shareToSocial: "Share to Social",
+      qrCode: "QR Code",
+      generating: "Generating...",
+      scanToShare: "Scan to share",
+      qrCodeError: "Generation Failed",
+      shareFileText: "Share file: {filename}",
     },
 
     // File preview
@@ -71,6 +81,16 @@ export default {
       error: "Preview load failed",
       notSupported: "This file type does not support preview",
       downloadToView: "Please download the file to view",
+      fullscreen: "Fullscreen",
+      exitFullscreen: "Exit fullscreen",
+
+      // Text preview mode switch (all belong to \"text preview\")
+      modes: {
+        text: "Text",
+        code: "Code",
+        markdown: "Markdown",
+        html: "HTML",
+      },
 
       // Generic preview
       generic: {
@@ -96,7 +116,7 @@ export default {
       // Text preview
       text: {
         title: "Text File Preview",
-        loading: "Loading text content...",
+        loading: "Loading...",
         error: "Failed to load text content",
         tooLarge: "File is too large, please download to view complete content for performance reasons",
         truncated: "Content has been truncated, please download to view complete file",
@@ -105,26 +125,26 @@ export default {
       // Code preview
       code: {
         title: "Code Preview",
-        loading: "Loading code content...",
+        loading: "Loading...",
       },
 
       // Config file preview
       config: {
         title: "Config File Preview",
-        loading: "Loading config file...",
+        loading: "Loading...",
       },
 
       // Markdown preview
       markdown: {
         title: "Markdown Preview",
-        loading: "Loading Markdown content...",
+        loading: "Loading...",
         error: "Markdown preview load failed",
       },
 
       // HTML preview
       html: {
         title: "HTML Preview",
-        loading: "Loading HTML content...",
+        loading: "Loading...",
         loadingSource: "Loading HTML source...",
         error: "HTML load failed",
         viewSource: "View Source",
@@ -134,29 +154,62 @@ export default {
       // PDF preview
       pdf: {
         title: "PDF Preview",
-        loading: "Loading PDF...",
+        loading: "Loading...",
         error: "PDF load failed",
+        browserNative: "Browser Native",
+        pdfjsLabel: "PDF.js",
+      },
+
+      // EPUB preview
+      epub: {
+        title: "EPUB Preview",
+        loading: "Loading...",
+        error: "EPUB load failed",
+        browserNative: "Local Preview",
+        toc: "Contents",
+        closeToc: "Close contents",
+        noToc: "No contents",
+        readingMode: "Reading mode",
+        modePaginated: "Paginated",
+        modeScrolled: "Scrolled",
+        prevPage: "Previous page",
+        nextPage: "Next page",
+        page: "Page",
+        bookmarks: "Bookmarks",
+        addBookmark: "Add bookmark",
+        removeBookmark: "Remove bookmark",
+        untitledBookmark: "Untitled bookmark",
+        historyBack: "Go back",
+        historyForward: "Go forward",
+        progressSaved: "Progress saved",
+        progressRestored: "Restored to last reading position",
       },
 
       // Image preview
       image: {
         title: "Image Preview",
-        loading: "Loading image...",
+        loading: "Loading...",
         error: "Image load failed",
       },
 
       // Video preview
       video: {
         title: "Video Preview",
-        loading: "Loading video...",
+        loading: "Loading...",
         error: "Video load failed",
         notSupported: "Your browser does not support video tag",
+        hlsShareNotSupportedTitle: "m3u8 (HLS) is not supported on the share page",
+        hlsShareNotSupportedTip:
+          "This is an m3u8 playlist. A single-file share cannot include its segments (ts/m4s/key). Please open it from the Mount Browser page.",
       },
+
+      // Direct preview hint
+      directNotSupported: "Current storage does not support direct-link preview, please switch to proxy mode.",
 
       // Audio preview
       audio: {
         title: "Audio Preview",
-        loading: "Loading audio...",
+        loading: "Loading...",
         error: "Audio load failed",
         notSupported: "Your browser does not support audio tag",
       },
@@ -164,7 +217,7 @@ export default {
       // Office preview
       office: {
         title: "Office Preview",
-        loading: "Loading preview...",
+        loading: "Loading...",
         loadingDetail: "Loading Office preview, please wait...",
         error: "Office preview load failed",
         useMicrosoft: "Use Microsoft Preview",
@@ -185,6 +238,8 @@ export default {
         microsoftService: "Using Microsoft Office service",
         proxyMode: " (Worker proxy mode)",
         directMode: " (Direct access mode)",
+        providerMicrosoft: "Microsoft Office Online",
+        providerGoogle: "Google Docs",
       },
     },
 

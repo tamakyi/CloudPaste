@@ -6,10 +6,14 @@
  * 前端负责根据用户的时区设置进行本地化显示
  */
 
+import { useLocalStorage } from "@vueuse/core";
+
+const storedLanguage = useLocalStorage("language", "zh-CN");
+
 // 获取当前语言设置
 const getCurrentLanguage = () => {
   try {
-    return localStorage.getItem("language") || "zh-CN";
+    return storedLanguage.value || "zh-CN";
   } catch {
     return "zh-CN";
   }
@@ -58,27 +62,6 @@ const translations = {
     yearsLater: "{count} years later",
     neverExpires: "Never expires",
     expired: "Expired",
-  },
-  "ja-JP": {
-    unknown: "不明",
-    dateInvalid: "日付が無効です",
-    dateFormatError: "日付形式が無効です",
-    soon: "間もなく",
-    justNow: "ただいま",
-    minutesAgo: "{count}分前",
-    minutesLater: "{count}分後",
-    hoursAgo: "{count}時間前",
-    hoursLater: "{count}時間後",
-    daysAgo: "{count}日前",
-    daysLater: "{count}日後",
-    weeksAgo: "{count}週間前",
-    weeksLater: "{count}週間後",
-    monthsAgo: "{count}ヶ月前",
-    monthsLater: "{count}ヶ月後",
-    yearsAgo: "{count}年前",
-    yearsLater: "{count}年後",
-    neverExpires: "期限なし",
-    expired: "期限切れ",
   },
 };
 
@@ -188,7 +171,7 @@ export const parseUTCDate = (utcDateString) => {
  * 获取用户的首选语言设置
  * @returns {string} 用户的语言代码
  */
-const getUserLocale = () => {
+export const getUserLocale = () => {
   // 优先使用浏览器语言设置
   if (navigator.language) {
     return navigator.language;
@@ -343,6 +326,44 @@ export const formatCurrentTime = () => {
     second: "2-digit",
   });
 };
+
+/**
+ * 获取当前日期时间的文件名存档格式
+ * 用于压缩包、拷贝、导出等场景
+ * 格式: YYYY-MM-DD-HH-mm-ss
+ */
+export const formatNowForFilename = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  const hours = String(now.getHours()).padStart(2, "0");
+  const minutes = String(now.getMinutes()).padStart(2, "0");
+  const seconds = String(now.getSeconds()).padStart(2, "0");
+
+  return `${year}-${month}-${day}-${hours}-${minutes}-${seconds}`;
+};
+
+/**
+ * 将Date/日期字符串等转换为本地化的日期+时间字符串(包括秒)
+ * @param {Date|string|number} date - Date对象/日期字符串/时间戳
+ * @returns {string} 格式化的本地日期时间字符串
+ */
+export const formatLocalDateTimeWithSeconds = (date) => {
+  if (!date) return t("unknown");
+
+  const parsed = parseUTCDate(date);
+  if (!parsed) {
+    return t("dateInvalid");
+  }
+
+  try {
+    return new Intl.DateTimeFormat(getUserLocale(), TIME_FORMAT_OPTIONS.FULL_DATETIME_WITH_SECONDS).format(parsed);
+  } catch (error) {
+    console.error("日期格式化错误:", error, "输入:", date);    return t("dateFormatError");
+  }
+};
+
 
 // 导出时间格式选项，供其他组件使用
 export { TIME_FORMAT_OPTIONS };

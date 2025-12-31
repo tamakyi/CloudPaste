@@ -1,16 +1,35 @@
 /**
  * 基础Repository类
  * 提供通用的数据访问方法，所有具体Repository继承此类
- * 职责：纯粹的数据访问，不包含业务逻辑
+ * 纯粹的数据访问，不包含业务逻辑
  */
+
+import { ValidationError } from "../http/errors.js";
+import { getDialect } from "../db/dialects/index.js";
 
 export class BaseRepository {
   /**
    * 构造函数
-   * @param {D1Database} db - D1数据库实例
+   * @param {D1Database} db - 数据库实例（D1/SQLiteAdapter/未来可扩展）
+   * @param {object} [dialect] - 数据库方言对象（用于多数据库扩展）
    */
-  constructor(db) {
+  constructor(db, dialect = null) {
     this.db = db;
+    // KISS：dialect 必须可用，否则默认 sqlite（当前项目主运行形态）
+    this.dialect = dialect || getDialect("sqlite");
+  }
+
+  /**
+   * 构建“插入忽略冲突”的 SQL
+   * - 用于替代散落的 INSERT OR IGNORE / INSERT IGNORE / ON CONFLICT DO NOTHING
+   * @param {string} table
+   * @param {string[]} columns
+   */
+  _buildInsertIgnoreSql(table, columns) {
+    if (!this.dialect?.buildInsertIgnoreSql) {
+      throw new ValidationError("当前数据库方言未实现 buildInsertIgnoreSql");
+    }
+    return this.dialect.buildInsertIgnoreSql({ table, columns });
   }
 
   /**
@@ -96,7 +115,7 @@ export class BaseRepository {
     const values = Object.values(data);
     
     if (fields.length === 0) {
-      throw new Error('创建记录时数据不能为空');
+      throw new ValidationError('创建记录时数据不能为空');
     }
     
     const fieldsClause = fields.join(', ');
@@ -120,7 +139,7 @@ export class BaseRepository {
     const values = Object.values(data);
     
     if (fields.length === 0) {
-      throw new Error('更新记录时数据不能为空');
+      throw new ValidationError('更新记录时数据不能为空');
     }
     
     const setClause = fields.map(field => `${field} = ?`).join(', ');
@@ -155,7 +174,7 @@ export class BaseRepository {
     const values = Object.values(conditions);
     
     if (fields.length === 0) {
-      throw new Error('删除记录时条件不能为空');
+      throw new ValidationError('删除记录时条件不能为空');
     }
     
     const whereClause = fields.map(field => `${field} = ?`).join(' AND ');

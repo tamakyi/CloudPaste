@@ -2,35 +2,29 @@
  * 统一挂载点路由
  */
 import { Hono } from "hono";
-import { authGateway } from "../middlewares/authGatewayMiddleware.js";
 import { createMount, updateMount, deleteMount, getAllMounts } from "../services/storageMountService.js";
-import { ApiStatus } from "../constants/index.js";
-import { createErrorResponse } from "../utils/common.js";
-import { HTTPException } from "hono/http-exception";
-import { Permission } from "../constants/permissions.js";
-
-const mountRoutes = new Hono();
+import { ApiStatus, UserType } from "../constants/index.js";
+import { jsonOk, jsonCreated } from "../utils/common.js";
+import { usePolicy } from "../security/policies/policies.js";
+import { resolvePrincipal } from "../security/helpers/principal.js";
+import { getAccessibleMountsForUser } from "../security/helpers/access.js";
+import { StorageFactory } from "../storage/factory/StorageFactory.js";
+import { getMountConfigSchema } from "../storage/factory/MountConfigSchema.js";
 
 /**
- * 统一的API错误处理函数
- * 消除原来两个文件中的重复代码
- * @param {Context} c - Hono上下文
- * @param {Error} error - 捕获的错误
- * @param {string} defaultMessage - 默认错误消息
- * @returns {Response} JSON错误响应
+ * 为挂载点列表附加能力信息
+ * @param {Array} mounts - 挂载点列表
+ * @returns {Array} 附加了 capabilities 字段的挂载点列表
  */
-const handleApiError = (c, error, defaultMessage) => {
-  // 记录错误，但避免冗余日志
-  console.error(`API错误: ${error.message || defaultMessage}`);
+function enrichMountsWithCapabilities(mounts) {
+  if (!Array.isArray(mounts)) return mounts;
+  return mounts.map(mount => ({
+    ...mount,
+    capabilities: StorageFactory.getRegisteredCapabilities(mount.storage_type) || [],
+  }));
+}
 
-  // 如果是HTTPException，使用其状态码
-  if (error instanceof HTTPException) {
-    return c.json(createErrorResponse(error.status, error.message), error.status);
-  }
-
-  // 其他错误视为内部服务器错误
-  return c.json(createErrorResponse(ApiStatus.INTERNAL_ERROR, error.message || defaultMessage), ApiStatus.INTERNAL_ERROR);
-};
+const mountRoutes = new Hono();
 
 /**
  * 获取挂载点列表
@@ -38,108 +32,112 @@ const handleApiError = (c, error, defaultMessage) => {
  * - 管理员：返回所有挂载点（包括禁用的）
  * - API密钥用户：返回有权限的活跃挂载点
  */
-mountRoutes.get("/api/mount/list", authGateway({
-  requireAuth: true,
-  customCheck: (authResult) => {
-    // 管理员或有挂载查看权限的API密钥用户
-    return authResult.isAdmin() || authResult.hasPermission(Permission.MOUNT_VIEW);
-  }
-}), async (c) => {
-  const db = c.env.DB;
-  const authResult = c.get("authResult");
+const requireAdmin = usePolicy("admin.all");
+const requireMountView = usePolicy("fs.base");
 
-  try {
-    if (authResult.isAdmin()) {
-      // 管理员：获取所有挂载点（包括禁用的，用于管理界面）
-      const mounts = await getAllMounts(db, true);
-      
-      return c.json({
-        code: ApiStatus.SUCCESS,
-        message: "获取挂载点列表成功",
-        data: mounts,
-        success: true,
-      });
-    } else {
-      // API密钥用户：根据基本路径获取可访问的挂载点
-      const apiKeyInfo = authGateway.utils.getApiKeyInfo(c);
-      const mounts = await authGateway.utils.getAccessibleMounts(db, apiKeyInfo, "apiKey");
-      
-      return c.json({
-        code: ApiStatus.SUCCESS,
-        message: "获取挂载点列表成功",
-        data: mounts,
-        success: true,
-      });
-    }
-  } catch (error) {
-    return handleApiError(c, error, "获取挂载点列表失败");
+mountRoutes.get("/api/mount/list", requireMountView, async (c) => {
+  const db = c.env.DB;
+  const identity = resolvePrincipal(c, { allowedTypes: [UserType.ADMIN, UserType.API_KEY] });
+
+  if (identity.isAdmin) {
+    const mounts = await getAllMounts(db, true);
+    // 附加驱动能力信息，供前端动态适配功能
+    const enrichedMounts = enrichMountsWithCapabilities(mounts);
+    return jsonOk(c, enrichedMounts, "获取挂载点列表成功");
   }
+
+  const mounts = await getAccessibleMountsForUser(db, identity.apiKeyInfo, UserType.API_KEY);
+  // 附加驱动能力信息，供前端动态适配功能
+  const enrichedMounts = enrichMountsWithCapabilities(mounts);
+  return jsonOk(c, enrichedMounts, "获取挂载点列表成功");
 });
 
 /**
  * 创建挂载点（仅管理员）
  */
-mountRoutes.post("/api/mount/create", authGateway.requireAdmin(), async (c) => {
+mountRoutes.post("/api/mount/create", requireAdmin, async (c) => {
   const db = c.env.DB;
-  const adminId = authGateway.utils.getUserId(c);
+  const { userId: adminId } = resolvePrincipal(c, { allowedTypes: [UserType.ADMIN] });
 
-  try {
-    const body = await c.req.json();
-    const mount = await createMount(db, body, adminId);
+  const body = await c.req.json();
+  const mount = await createMount(db, body, adminId);
 
-    // 返回创建成功响应
-    return c.json({
-      code: ApiStatus.CREATED,
-      message: "挂载点创建成功",
-      data: mount,
-      success: true,
-    });
-  } catch (error) {
-    return handleApiError(c, error, "创建挂载点失败");
-  }
+  return jsonCreated(c, mount, "挂载点创建成功");
 });
 
 /**
  * 更新挂载点（仅管理员）
  */
-mountRoutes.put("/api/mount/:id", authGateway.requireAdmin(), async (c) => {
+mountRoutes.put("/api/mount/:id", requireAdmin, async (c) => {
   const db = c.env.DB;
-  const adminId = authGateway.utils.getUserId(c);
+  const { userId: adminId } = resolvePrincipal(c, { allowedTypes: [UserType.ADMIN] });
   const { id } = c.req.param();
 
-  try {
-    const body = await c.req.json();
-    await updateMount(db, id, body, adminId, true);
+  const body = await c.req.json();
+  await updateMount(db, id, body, adminId, true);
 
-    return c.json({
-      code: ApiStatus.SUCCESS,
-      message: "挂载点已更新",
-      success: true,
-    });
-  } catch (error) {
-    return handleApiError(c, error, "更新挂载点失败");
-  }
+  return jsonOk(c, undefined, "挂载点已更新");
 });
 
 /**
  * 删除挂载点（仅管理员）
  */
-mountRoutes.delete("/api/mount/:id", authGateway.requireAdmin(), async (c) => {
+mountRoutes.delete("/api/mount/:id", requireAdmin, async (c) => {
   const db = c.env.DB;
-  const adminId = authGateway.utils.getUserId(c);
+  const { userId: adminId } = resolvePrincipal(c, { allowedTypes: [UserType.ADMIN] });
   const { id } = c.req.param();
 
-  try {
-    await deleteMount(db, id, adminId, true);
+  await deleteMount(db, id, adminId, true);
 
-    return c.json({
-      code: ApiStatus.SUCCESS,
-      message: "挂载点删除成功",
-      success: true,
-    });
-  } catch (error) {
-    return handleApiError(c, error, "删除挂载点失败");
+  return jsonOk(c, undefined, "挂载点删除成功");
+});
+
+/**
+ * 获取存储类型的能力列表
+ * GET /api/storage-types/:type/capabilities
+ * 返回指定存储类型支持的能力列表及元数据
+ */
+mountRoutes.get("/api/storage-types/:type/capabilities", requireMountView, async (c) => {
+  const { type } = c.req.param();
+
+  if (!StorageFactory.isTypeSupported(type)) {
+    return c.json({ success: false, message: `不支持的存储类型: ${type}` }, ApiStatus.NOT_FOUND);
   }
+
+  const meta = StorageFactory.getTypeMetadata(type);
+
+  return jsonOk(
+    c,
+    {
+      storageType: type,
+      displayName: meta?.displayName || type,
+      capabilities: meta?.capabilities || [],
+      ui: meta?.ui || null,
+      configSchema: meta?.configSchema || null,
+      providerOptions: meta?.providerOptions || null,
+    },
+    "获取存储类型能力成功",
+  );
+});
+
+/**
+ * 获取所有支持的存储类型及其能力
+ * GET /api/storage-types
+ * 返回所有注册的存储类型及其能力与配置元数据信息
+ */
+mountRoutes.get("/api/storage-types", requireMountView, async (c) => {
+  const result = StorageFactory.getAllTypeMetadata();
+  return jsonOk(c, result, "获取存储类型列表成功");
+});
+
+/**
+ * 获取挂载点配置Schema
+ * GET /api/mount-schema
+ * 返回挂载点表单的Schema定义，供前端动态渲染表单
+ */
+mountRoutes.get("/api/mount-schema", requireAdmin, async (c) => {
+  const schema = getMountConfigSchema();
+  return jsonOk(c, schema, "获取挂载点Schema成功");
 });
 
 export default mountRoutes;

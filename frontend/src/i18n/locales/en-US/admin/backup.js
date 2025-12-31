@@ -48,8 +48,8 @@ export default {
         description: "Storage mount point configurations",
       },
       storage_config: {
-        name: "S3 Config Management",
-        description: "S3 storage configuration information",
+        name: "Storage Config Management",
+        description: "Storage configuration and access control",
       },
       key_management: {
         name: "Key Management",
@@ -63,12 +63,38 @@ export default {
         name: "System Settings",
         description: "System global settings",
       },
+      fs_meta_management: {
+        name: "FS Meta Management",
+        description: "Directory README, hide rules and path passwords",
+      },
+      task_management: {
+        name: "Task Management",
+        description: "Async task execution records and status",
+      },
+      upload_sessions: {
+        name: "Multipart Upload Session Management",
+        description: "Multipart upload session records and status",
+      },
+      vfs_management: {
+        name: "VFS Management",
+        description: "Virtual directory tree index. Recommended to backup with 'Storage Config' and 'Mount Management'",
+      },
     },
 
     // Logs and status messages
     logs: {
       startFullBackup: "Starting full backup creation...",
       startModuleBackup: "Starting module backup creation ({count} modules)...",
+      backupFileParsed: "Backup file parsed successfully (local preview)",
+      previewStart: "Starting restore preview ({mode} mode)...",
+      previewPassed: "Preview passed, ready to restore",
+      previewFailed: "Preview found issues, restore canceled",
+      previewIssue: "Preview issue: {message}",
+      previewIssueUnknown: "Unknown issue",
+      previewBlockedRestore: "Preview not passed, restore blocked",
+      previewIntegrityIssues: "Preview warning: found {count} potential integrity issues",
+      restoreIntegrityIssues: "Restore warning: found {count} integrity issues",
+      serverWarning: "Warning: {message}",
       startRestore: "Starting restore execution ({mode} mode)...",
       backupComplete: "Backup creation completed, exported {count} records",
       moduleBackupComplete: "Module backup creation completed, exported {count} records",

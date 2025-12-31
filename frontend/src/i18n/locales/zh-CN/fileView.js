@@ -19,8 +19,8 @@ export default {
       accessCount: "访问次数",
       expiresAt: "过期时间",
       accessMode: "访问模式",
-      proxyAccess: "Worker代理访问",
-      directAccess: "S3/CDN直链访问",
+      proxyAccess: "本地代理访问",
+      directAccess: "直链/URL代理访问",
       limit: "限制",
     },
 
@@ -41,6 +41,7 @@ export default {
     actions: {
       download: "下载文件",
       downloadFile: "下载文件",
+      updateSuccess: "文件信息更新成功",
       downloadFailed: "下载失败",
       downloadExpired: "下载链接可能已过期，请尝试刷新获取新的下载链接",
       share: "分享链接",
@@ -63,6 +64,15 @@ export default {
       retry: "重试",
       refresh: "刷新",
       manualCopy: "无法自动复制，请手动复制链接",
+      copyLink: "复制链接",
+      copied: "已复制",
+      nativeShare: "原生分享",
+      shareToSocial: "分享到社交平台",
+      qrCode: "二维码",
+      generating: "生成中...",
+      scanToShare: "扫码分享",
+      qrCodeError: "生成失败",
+      shareFileText: "分享文件：{filename}",
     },
 
     // 文件预览
@@ -71,6 +81,16 @@ export default {
       error: "预览加载失败",
       notSupported: "此文件类型不支持预览",
       downloadToView: "请下载文件查看",
+      fullscreen: "全屏",
+      exitFullscreen: "退出全屏",
+
+      // 文本预览模式切换（统一归属“文本预览”）
+      modes: {
+        text: "文本",
+        code: "代码",
+        markdown: "Markdown",
+        html: "HTML",
+      },
 
       // 通用预览
       generic: {
@@ -96,7 +116,7 @@ export default {
       // 文本预览
       text: {
         title: "文本文件预览",
-        loading: "加载文本内容中...",
+        loading: "加载中...",
         error: "加载文本内容失败",
         tooLarge: "文件过大，为了性能考虑，请下载后查看完整内容",
         truncated: "内容已截断，请下载查看完整文件",
@@ -105,26 +125,26 @@ export default {
       // 代码预览
       code: {
         title: "代码预览",
-        loading: "加载代码内容中...",
+        loading: "加载中...",
       },
 
       // 配置文件预览
       config: {
         title: "配置文件预览",
-        loading: "加载配置文件中...",
+        loading: "加载中...",
       },
 
       // Markdown预览
       markdown: {
         title: "Markdown预览",
-        loading: "加载Markdown内容中...",
+        loading: "加载中...",
         error: "Markdown预览加载失败",
       },
 
       // HTML预览
       html: {
         title: "HTML预览",
-        loading: "加载HTML内容中...",
+        loading: "加载中...",
         loadingSource: "加载HTML源码中...",
         error: "HTML加载失败",
         viewSource: "查看源码",
@@ -134,29 +154,62 @@ export default {
       // PDF预览
       pdf: {
         title: "PDF预览",
-        loading: "加载PDF中...",
+        loading: "加载中...",
         error: "PDF加载失败",
+        browserNative: "原生预览",
+        pdfjsLabel: "PDF.js",
+      },
+
+      // EPUB预览
+      epub: {
+        title: "EPUB预览",
+        loading: "加载中...",
+        error: "EPUB加载失败",
+        browserNative: "本地预览",
+        toc: "目录",
+        closeToc: "关闭目录",
+        noToc: "无目录",
+        readingMode: "阅读模式",
+        modePaginated: "翻页",
+        modeScrolled: "滚动",
+        prevPage: "上一页",
+        nextPage: "下一页",
+        page: "第",
+        bookmarks: "书签",
+        addBookmark: "添加书签",
+        removeBookmark: "移除书签",
+        untitledBookmark: "未命名书签",
+        historyBack: "返回",
+        historyForward: "前进",
+        progressSaved: "进度已保存",
+        progressRestored: "已恢复到上次阅读位置",
       },
 
       // 图片预览
       image: {
         title: "图片预览",
-        loading: "加载图片中...",
+        loading: "加载中...",
         error: "图片加载失败",
       },
 
       // 视频预览
       video: {
         title: "视频预览",
-        loading: "加载视频中...",
+        loading: "加载中...",
         error: "视频加载失败",
         notSupported: "您的浏览器不支持视频标签",
+        hlsShareNotSupportedTitle: "分享页不支持 m3u8 切片视频",
+        hlsShareNotSupportedTip:
+          "这是 m3u8 清单文件，分享页（单文件）无法播放。请回到“挂载浏览”页面配合分片播放",
       },
+
+      // 直链预览提示
+      directNotSupported: "当前存储不支持直链预览，请切换为代理模式。",
 
       // 音频预览
       audio: {
         title: "音频预览",
-        loading: "加载音频中...",
+        loading: "加载中...",
         error: "音频加载失败",
         notSupported: "您的浏览器不支持音频标签",
       },
@@ -164,7 +217,7 @@ export default {
       // Office预览
       office: {
         title: "Office预览",
-        loading: "加载预览中...",
+        loading: "加载中...",
         loadingDetail: "加载Office预览中，请稍候...",
         error: "Office预览加载失败",
         useMicrosoft: "使用Microsoft预览",
@@ -185,6 +238,8 @@ export default {
         microsoftService: "使用Microsoft Office服务",
         proxyMode: " (Worker代理模式)",
         directMode: " (直接访问模式)",
+        providerMicrosoft: "Microsoft Office Online",
+        providerGoogle: "Google Docs",
       },
     },
 

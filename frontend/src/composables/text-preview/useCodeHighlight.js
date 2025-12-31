@@ -4,6 +4,7 @@
  */
 
 import { ref, computed } from "vue";
+import { VDITOR_ASSETS_BASE } from "@/utils/vditorLoader.js";
 
 export function useCodeHighlight() {
   // 状态
@@ -106,10 +107,10 @@ export function useCodeHighlight() {
       console.log("通过 Vditor 方式加载 highlight.js");
 
       // 加载 highlight.js 主文件
-      await loadScript("/assets/vditor/dist/js/highlight.js/highlight.min.js");
+      await loadScript(`${VDITOR_ASSETS_BASE}/dist/js/highlight.js/highlight.min.js`);
 
       // 加载第三方语言包
-      await loadScript("/assets/vditor/dist/js/highlight.js/third-languages.js");
+      await loadScript(`${VDITOR_ASSETS_BASE}/dist/js/highlight.js/third-languages.js`);
 
       // 等待 hljs 全局变量可用
       await waitForGlobal("hljs", 5000);
@@ -354,7 +355,10 @@ export function useCodeHighlight() {
       }
 
       // 检查主题文件是否存在的路径列表
-      const possiblePaths = [`/assets/vditor/dist/js/highlight.js/styles/${theme}.min.css`, `/assets/vditor/dist/js/highlight.js/styles/${theme}.css`];
+      const possiblePaths = [
+        `${VDITOR_ASSETS_BASE}/dist/js/highlight.js/styles/${theme}.min.css`,
+        `${VDITOR_ASSETS_BASE}/dist/js/highlight.js/styles/${theme}.css`,
+      ];
 
       // 尝试加载主题
       let loaded = false;

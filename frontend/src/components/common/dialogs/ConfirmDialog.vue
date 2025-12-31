@@ -1,6 +1,7 @@
 <template>
-  <div v-if="isOpen" class="fixed inset-0 z-[70] overflow-auto bg-black bg-opacity-50 flex items-center justify-center" @click="handleBackdropClick">
-    <div class="relative w-full max-w-md p-6 rounded-lg shadow-xl" :class="darkMode ? 'bg-gray-800' : 'bg-white'" @click.stop>
+  <Teleport to="body">
+    <div v-if="isOpen" class="fixed inset-0 z-[70] overflow-auto bg-black bg-opacity-50 flex items-center justify-center" @click="handleBackdropClick">
+      <div class="relative w-full max-w-md p-6 rounded-lg shadow-xl" :class="darkMode ? 'bg-gray-800' : 'bg-white'" @click.stop>
       <!-- 标题和内容 -->
       <div class="mb-4">
         <h3 class="text-lg font-semibold" :class="darkMode ? 'text-gray-100' : 'text-gray-900'">
@@ -27,19 +28,19 @@
         </button>
         <button @click="handleConfirm" :disabled="loading" class="px-4 py-2 rounded-md text-white transition-colors flex items-center space-x-2" :class="confirmButtonClass">
           <!-- 加载状态图标 -->
-          <svg v-if="loading" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-          </svg>
+          <IconRefresh v-if="loading" class="animate-spin h-4 w-4" aria-hidden="true" />
           <span>{{ loading ? displayLoadingText : displayConfirmText }}</span>
         </button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed } from "vue";
+import { onKeyStroke } from "@vueuse/core";
+import { IconRefresh } from "@/components/icons";
 import { useI18n } from "vue-i18n";
 
 // 国际化
@@ -138,23 +139,13 @@ const handleBackdropClick = () => {
   }
 };
 
-// 键盘事件处理
-const handleKeydown = (event) => {
+// 键盘事件：ESC 取消，Enter 确认
+onKeyStroke("Escape", () => {
   if (!props.isOpen || props.loading) return;
-
-  if (event.key === "Escape") {
-    handleCancel();
-  } else if (event.key === "Enter") {
-    handleConfirm();
-  }
-};
-
-// 生命周期
-onMounted(() => {
-  document.addEventListener("keydown", handleKeydown);
+  handleCancel();
 });
-
-onUnmounted(() => {
-  document.removeEventListener("keydown", handleKeydown);
+onKeyStroke("Enter", () => {
+  if (!props.isOpen || props.loading) return;
+  handleConfirm();
 });
 </script>

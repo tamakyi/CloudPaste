@@ -3,25 +3,22 @@
  * 提供目录列表的缓存功能，用于提高频繁访问目录的性能
  */
 import { BaseCache } from "./BaseCache.js";
-import { clearS3UrlCache } from "./S3UrlCache.js";
-import { clearSearchCache } from "./SearchCache.js";
 import { normalizePath } from "../storage/fs/utils/PathResolver.js";
 
 class DirectoryCacheManager extends BaseCache {
   /**
    * 构造函数
    * @param {Object} options - 配置选项
-   * @param {number} options.maxItems - 最大缓存项数量，默认为500
-   * @param {number} options.maxMemoryMB - 最大内存使用量(MB)，默认为100
+   * @param {number} options.maxItems - 最大缓存项数量，默认为300
    * @param {number} options.prunePercentage - 清理时删除的缓存项百分比，默认为20%
    */
   constructor(options = {}) {
+    const { maxItems, prunePercentage, defaultTtl } = options;
     super({
-      maxItems: options.maxItems || 300, 
-      prunePercentage: options.prunePercentage || 20,
-      defaultTtl: 300, 
+      maxItems: maxItems || 300,
+      prunePercentage: prunePercentage || 20,
+      defaultTtl: defaultTtl || 300,
       name: "DirectoryCache",
-      ...options,
     });
   }
 
@@ -39,6 +36,13 @@ class DirectoryCacheManager extends BaseCache {
     // 使用 Base64 编码路径，避免特殊字符问题
     const encodedPath = Buffer.from(normalizedPath).toString("base64");
     return `${mountId}:${encodedPath}`;
+  }
+
+  getAdditionalCacheData(mountId, path) {
+    return {
+      normalizedPath: normalizePath(path, true),
+      mountId: mountId != null ? String(mountId) : "",
+    };
   }
 
   /**
@@ -118,6 +122,55 @@ class DirectoryCacheManager extends BaseCache {
   }
 
   /**
+   * 使指定目录及其子树（所有子目录）的缓存失效
+   * 例如: /a/b/ 会使 /a/b/、/a/b/c/、/a/b/c/d/ ... 的缓存失效
+   * @param {string} mountId - 挂载点ID
+   * @param {string} path - 目录路径
+   * @returns {number} - 被删除的缓存项数量
+   */
+  invalidatePathTree(mountId, path) {
+    if (!mountId) return 0;
+
+    const normalizedPrefix = normalizePath(path, true);
+    if (normalizedPrefix === "/") {
+      return this.invalidateMount(mountId);
+    }
+
+    const decodePathFromKey = (key) => {
+      if (typeof key !== "string") return null;
+      const idx = key.indexOf(":");
+      if (idx <= 0) return null;
+      const encoded = key.slice(idx + 1);
+      if (!encoded) return null;
+      try {
+        return Buffer.from(encoded, "base64").toString("utf8");
+      } catch (_) {
+        return null;
+      }
+    };
+
+    let clearedCount = 0;
+    for (const [key, item] of this.cache.entries()) {
+      if (!key.startsWith(`${mountId}:`)) continue;
+      const cachedPath = typeof item?.normalizedPath === "string" && item.normalizedPath
+        ? item.normalizedPath
+        : decodePathFromKey(key);
+      if (typeof cachedPath !== "string" || cachedPath.length === 0) continue;
+      if (cachedPath === normalizedPrefix || cachedPath.startsWith(normalizedPrefix)) {
+        this.cache.delete(key);
+        clearedCount++;
+      }
+    }
+
+    if (clearedCount > 0) {
+      this.stats.invalidations += clearedCount;
+      console.log(`目录子树缓存已失效 - 挂载点:${mountId}, 路径:${path}, 删除项:${clearedCount}`);
+    }
+
+    return clearedCount;
+  }
+
+  /**
    * 清理指定挂载点的所有缓存
    * @param {string} mountId - 挂载点ID
    * @returns {number} 清理的缓存项数量
@@ -152,108 +205,9 @@ const directoryCacheManager = new DirectoryCacheManager();
  * 统一的缓存清理函数 - 可根据挂载点ID或S3配置ID清理缓存
  * @param {Object} options - 清理选项
  * @param {string} [options.mountId] - 要清理的挂载点ID
- * @param {D1Database} [options.db] - 数据库连接（当使用s3ConfigId时必需）
- * @param {string} [options.s3ConfigId] - S3配置ID，将清理所有关联的挂载点
+ * @param {D1Database} [options.db] - 数据库连接（当使用storageConfigId时必需）
+ * @param {string} [options.storageConfigId] - 存储配置ID，将清理所有关联的挂载点
  * @returns {Promise<number>} 清除的缓存项数量
  */
-export async function clearDirectoryCache(options = {}) {
-  const { mountId, db, s3ConfigId } = options;
-  let totalCleared = 0;
-
-  try {
-    // 场景1: 直接提供挂载点ID - 清理单个挂载点
-    if (mountId) {
-      const clearedCount = directoryCacheManager.invalidateMount(mountId);
-      totalCleared += clearedCount;
-
-      // 同时清理该挂载点的搜索缓存
-      let searchCleared = 0;
-      try {
-        searchCleared = clearSearchCache({ mountId });
-        totalCleared += searchCleared;
-      } catch (error) {
-        console.warn("清理搜索缓存失败:", error);
-      }
-
-      console.log(`已清理挂载点 ${mountId} 的缓存，目录缓存: ${clearedCount} 项，搜索缓存: ${searchCleared} 项`);
-    }
-
-    // 场景2: 提供S3配置ID - 查找并清理所有关联挂载点
-    if (db && s3ConfigId) {
-      // 获取与S3配置相关的所有挂载点
-      const mounts = await db
-        .prepare(
-          `SELECT m.id
-           FROM storage_mounts m
-           WHERE m.storage_type = 'S3' AND m.storage_config_id = ?`
-        )
-        .bind(s3ConfigId)
-        .all();
-
-      if (!mounts?.results?.length) {
-        console.log(`未找到与S3配置 ${s3ConfigId} 关联的挂载点`);
-      } else {
-        // 清理每个关联挂载点的缓存
-        let searchTotalCleared = 0;
-        for (const mount of mounts.results) {
-          const clearedCount = directoryCacheManager.invalidateMount(mount.id);
-          totalCleared += clearedCount;
-
-          // 同时清理该挂载点的搜索缓存
-          try {
-            const searchCleared = clearSearchCache({ mountId: mount.id });
-            totalCleared += searchCleared;
-            searchTotalCleared += searchCleared;
-          } catch (error) {
-            console.warn(`清理挂载点 ${mount.id} 搜索缓存失败:`, error);
-          }
-        }
-
-        if (totalCleared > 0) {
-          console.log(`已清理 ${mounts.results.length} 个挂载点的缓存，目录缓存: ${totalCleared - searchTotalCleared} 项，搜索缓存: ${searchTotalCleared} 项`);
-        }
-      }
-
-      // 清理S3URL缓存
-      try {
-        const s3UrlCleared = await clearS3UrlCache({ s3ConfigId });
-        totalCleared += s3UrlCleared;
-        console.log(`已清理S3配置 ${s3ConfigId} 的URL缓存，共 ${s3UrlCleared} 项`);
-      } catch (error) {
-        console.warn("清理S3URL缓存失败:", error);
-      }
-    }
-
-    // 如果没有提供有效参数，清理所有缓存
-    if (!mountId && !s3ConfigId) {
-      const dirCleared = directoryCacheManager.invalidateAll();
-      totalCleared += dirCleared;
-
-      let s3UrlCleared = 0;
-      try {
-        s3UrlCleared = await clearS3UrlCache();
-        totalCleared += s3UrlCleared;
-      } catch (error) {
-        console.warn("清理S3URL缓存失败:", error);
-      }
-
-      let searchCleared = 0;
-      try {
-        searchCleared = clearSearchCache();
-        totalCleared += searchCleared;
-      } catch (error) {
-        console.warn("清理搜索缓存失败:", error);
-      }
-
-      console.log(`已清理所有缓存：目录缓存 ${dirCleared} 项，URL缓存 ${s3UrlCleared} 项，搜索缓存 ${searchCleared} 项`);
-    }
-
-    return totalCleared;
-  } catch (error) {
-    console.error("清理缓存时出错:", error);
-    return 0;
-  }
-}
-
 // 导出单例实例和类 (单例用于实际应用，类用于测试和特殊场景)
 export { directoryCacheManager, DirectoryCacheManager };
