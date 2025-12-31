@@ -191,3 +191,4 @@ export function mixinCapabilities(BaseClass, ...capabilities) {
 
   return MixedClass;
 }
+import { ValidationError } from "../../../http/errors.js";

@@ -1,4 +1,9 @@
 import { DbTables } from "../constants/index.js";
+
+// Legacy tables that only exist to support old migrations; drop once migrations are trimmed.
+const LegacyDbTables = {
+  S3_CONFIGS: "s3_configs",
+};
 import crypto from "crypto";
 
 // ==================== 表结构定义 ====================
@@ -18,11 +23,13 @@ async function createPasteTables(db) {
         id TEXT PRIMARY KEY,
         slug TEXT UNIQUE NOT NULL,
         content TEXT NOT NULL,
+        title TEXT,
         remark TEXT,
         password TEXT,
         expires_at DATETIME,
         max_views INTEGER,
         views INTEGER DEFAULT 0,
+        is_public BOOLEAN NOT NULL DEFAULT 1,
         created_by TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -45,6 +52,9 @@ async function createPasteTables(db) {
     `
     )
     .run();
+
+  // 为可见性添加索引（如果不存在）
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_pastes_is_public ON ${DbTables.PASTES}(is_public)`).run();
 }
 
 /**
@@ -95,7 +105,7 @@ async function createAdminTables(db) {
         permissions INTEGER DEFAULT 0,
         role TEXT DEFAULT 'GENERAL',
         basic_path TEXT DEFAULT '/',
-        is_guest BOOLEAN DEFAULT 0,
+        is_enable BOOLEAN DEFAULT 0,
         last_used DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         expires_at DATETIME NOT NULL
@@ -112,34 +122,48 @@ async function createAdminTables(db) {
 async function createStorageTables(db) {
   console.log("创建存储相关表...");
 
-  // 创建s3_configs表 - 存储S3配置信息
+  // 创建 storage_configs
   await db
     .prepare(
       `
-      CREATE TABLE IF NOT EXISTS ${DbTables.S3_CONFIGS} (
+      CREATE TABLE IF NOT EXISTS ${DbTables.STORAGE_CONFIGS} (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
-        provider_type TEXT NOT NULL,
-        endpoint_url TEXT NOT NULL,
-        bucket_name TEXT NOT NULL,
-        region TEXT,
-        access_key_id TEXT NOT NULL,
-        secret_access_key TEXT NOT NULL,
-        path_style BOOLEAN DEFAULT 0,
-        default_folder TEXT DEFAULT '',
-        is_public BOOLEAN DEFAULT 0,
-        is_default BOOLEAN DEFAULT 0,
-        total_storage_bytes BIGINT,
-        custom_host TEXT,
-        signature_expires_in INTEGER DEFAULT 3600,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_used DATETIME,
+        storage_type TEXT NOT NULL,
         admin_id TEXT,
-        FOREIGN KEY (admin_id) REFERENCES ${DbTables.ADMINS}(id) ON DELETE CASCADE
+        is_public INTEGER NOT NULL DEFAULT 0,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        remark TEXT,
+        status TEXT NOT NULL DEFAULT 'ENABLED',
+        config_json TEXT NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        last_used DATETIME
       )
     `
     )
+    .run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_type ON ${DbTables.STORAGE_CONFIGS}(storage_type)`).run();
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_public ON ${DbTables.STORAGE_CONFIGS}(is_public)`).run();
+  await db.prepare(`CREATE UNIQUE INDEX IF NOT EXISTS idx_default_per_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id) WHERE is_default = 1`).run();
+
+  // 存储 ACL 表：主体 -> 存储配置访问白名单
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS ${DbTables.PRINCIPAL_STORAGE_ACL} (
+        subject_type TEXT NOT NULL,
+        subject_id TEXT NOT NULL,
+        storage_config_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (subject_type, subject_id, storage_config_id)
+      )
+    `
+    )
+    .run();
+  await db
+    .prepare(`CREATE INDEX IF NOT EXISTS idx_psa_storage_config_id ON ${DbTables.PRINCIPAL_STORAGE_ACL}(storage_config_id)`)
     .run();
 
   // 创建storage_mounts表 - 存储挂载配置
@@ -231,6 +255,44 @@ async function createFileTables(db) {
 }
 
 /**
+ * 创建 FS 目录 Meta 相关表
+ * @param {D1Database} db - D1数据库实例
+ */
+async function createFsMetaTables(db) {
+  console.log("创建 FS 目录 Meta 表...");
+
+  await db
+    .prepare(
+      `
+      CREATE TABLE IF NOT EXISTS ${DbTables.FS_META} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        path TEXT NOT NULL,
+
+        header_markdown TEXT NULL,
+        header_inherit BOOLEAN NOT NULL DEFAULT 0,
+
+        footer_markdown TEXT NULL,
+        footer_inherit BOOLEAN NOT NULL DEFAULT 0,
+
+        hide_patterns TEXT NULL,
+        hide_inherit BOOLEAN NOT NULL DEFAULT 0,
+
+        password TEXT NULL,
+        password_inherit BOOLEAN NOT NULL DEFAULT 0,
+
+        extra JSON NULL,
+
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )
+    `
+    )
+    .run();
+
+  await db.prepare(`CREATE INDEX IF NOT EXISTS idx_fs_meta_path ON ${DbTables.FS_META}(path)`).run();
+}
+
+/**
  * 创建系统设置表
  * @param {D1Database} db - D1数据库实例
  */
@@ -315,13 +377,13 @@ async function initDefaultSettings(db) {
     },
     {
       key: "webdav_upload_mode",
-      value: "direct",
+      value: "single",
       description: "WebDAV客户端的上传模式选择。",
       type: "select",
       group_id: 3,
       options: JSON.stringify([
-        { value: "direct", label: "直接上传" },
-        { value: "multipart", label: "分片上传" },
+        { value: "single", label: "单次上传" },
+        { value: "chunked", label: "分块上传" },
       ]),
       sort_order: 1,
       flags: 0,
@@ -387,6 +449,37 @@ async function createDefaultAdmin(db) {
   }
 }
 
+/**
+ * 创建默认游客 API 密钥（GUEST 角色），默认禁用且无权限
+ * @param {D1Database} db - D1数据库实例
+ */
+async function createDefaultGuestApiKey(db) {
+  console.log("检查默认游客 API 密钥...");
+
+  const guestCount = await db
+    .prepare(`SELECT COUNT(*) as count FROM ${DbTables.API_KEYS} WHERE role = 'GUEST'`)
+    .first();
+
+  if (guestCount && guestCount.count > 0) {
+    console.log("已存在游客 API 密钥，跳过创建");
+    return;
+  }
+
+  const id = crypto.randomUUID();
+  const key = "guest";
+  const expiresAt = new Date("9999-12-31T23:59:59Z").toISOString();
+
+  await db
+    .prepare(
+      `INSERT INTO ${DbTables.API_KEYS} (id, name, key, permissions, role, basic_path, is_enable, expires_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .bind(id, "guest", key, 0, "GUEST", "/", 0, expiresAt)
+    .run();
+
+  console.log("已创建默认游客 API 密钥");
+}
+
 // ==================== 主初始化函数 ====================
 
 /**
@@ -401,6 +494,7 @@ export async function initDatabase(db) {
   await createAdminTables(db);
   await createStorageTables(db);
   await createFileTables(db);
+  await createFsMetaTables(db);
   await createSystemTables(db);
 
   // 创建索引
@@ -415,6 +509,7 @@ export async function initDatabase(db) {
   await addDefaultProxySetting(db); // 默认代理设置 (1个)
 
   await createDefaultAdmin(db);
+  await createDefaultGuestApiKey(db);
 
   console.log("数据库初始化完成");
 }
@@ -496,13 +591,13 @@ async function executeMigrationForVersion(db, version) {
 
     case 6:
       // 版本6：为S3_CONFIGS表添加自定义域名和签名时效相关字段
-      await addTableField(db, DbTables.S3_CONFIGS, "custom_host", "custom_host TEXT");
-      await addTableField(db, DbTables.S3_CONFIGS, "signature_expires_in", "signature_expires_in INTEGER DEFAULT 3600");
+      await addTableField(db, LegacyDbTables.S3_CONFIGS, "custom_host", "custom_host TEXT");
+      await addTableField(db, LegacyDbTables.S3_CONFIGS, "signature_expires_in", "signature_expires_in INTEGER DEFAULT 3600");
       break;
 
     case 7:
       // 版本7：尝试删除S3_CONFIGS表中的custom_host_signature字段
-      await removeTableField(db, DbTables.S3_CONFIGS, "custom_host_signature");
+      await removeTableField(db, LegacyDbTables.S3_CONFIGS, "custom_host_signature");
       break;
 
     case 8:
@@ -555,6 +650,142 @@ async function executeMigrationForVersion(db, version) {
     case 17:
       // 版本17：添加自定义头部和body设置
       await addCustomContentSettings(db);
+      break;
+
+    case 18:
+      // 版本18：创建 storage_configs 并从 s3_configs 迁移数据（单表+JSON 方案 A）
+      console.log("版本18：创建 storage_configs 表并迁移 s3_configs 数据...");
+      // 1) 创建表
+      await db
+        .prepare(
+          `
+          CREATE TABLE IF NOT EXISTS ${DbTables.STORAGE_CONFIGS} (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            storage_type TEXT NOT NULL,
+            admin_id TEXT,
+            is_public INTEGER NOT NULL DEFAULT 0,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            remark TEXT,
+            status TEXT NOT NULL DEFAULT 'ENABLED',
+            config_json TEXT NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_used DATETIME
+          )
+        `
+        )
+        .run();
+      // 2) 索引与唯一约束（部分唯一索引）
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_admin ON ${DbTables.STORAGE_CONFIGS}(admin_id)`).run();
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_type ON ${DbTables.STORAGE_CONFIGS}(storage_type)`).run();
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_storage_public ON ${DbTables.STORAGE_CONFIGS}(is_public)`).run();
+      await db
+        .prepare(
+          `CREATE UNIQUE INDEX IF NOT EXISTS idx_default_per_admin
+           ON ${DbTables.STORAGE_CONFIGS}(admin_id)
+           WHERE is_default = 1`
+        )
+        .run();
+      // 3) 迁移数据（仅一次）：将 s3_configs 映射为 storage_configs（config_json 使用 json_object 构造，密钥保持加密值）
+      //    仅当目标 id 不存在时插入，避免重复迁移
+      await db
+        .prepare(
+          `
+          INSERT OR IGNORE INTO ${DbTables.STORAGE_CONFIGS} (
+            id, name, storage_type, admin_id, is_public, is_default, remark, status,
+            config_json, created_at, updated_at, last_used
+          )
+          SELECT
+            s.id,
+            s.name,
+            'S3' AS storage_type,
+            s.admin_id,
+            COALESCE(s.is_public, 0),
+            COALESCE(s.is_default, 0),
+            NULL AS remark,
+            'ENABLED' AS status,
+            json_object(
+              'provider_type', s.provider_type,
+              'endpoint_url', s.endpoint_url,
+              'bucket_name', s.bucket_name,
+              'region', s.region,
+              'path_style', s.path_style,
+              'default_folder', s.default_folder,
+              'custom_host', s.custom_host,
+              'signature_expires_in', s.signature_expires_in,
+              'total_storage_bytes', s.total_storage_bytes,
+              'access_key_id', s.access_key_id,
+              'secret_access_key', s.secret_access_key
+            ) AS config_json,
+            s.created_at,
+            s.updated_at,
+            s.last_used
+          FROM ${LegacyDbTables.S3_CONFIGS} s
+          WHERE NOT EXISTS (
+            SELECT 1 FROM ${DbTables.STORAGE_CONFIGS} t WHERE t.id = s.id
+          )
+        `
+          )
+        .run();
+      console.log("版本18：storage_configs 表与数据迁移完成。");
+      break;
+
+    case 19:
+      // 版本19：创建 principal_storage_acl 表（主体 -> 存储配置 ACL 白名单）
+      console.log("版本19：检查并创建 principal_storage_acl 表...");
+
+      await db
+        .prepare(
+          `
+          CREATE TABLE IF NOT EXISTS ${DbTables.PRINCIPAL_STORAGE_ACL} (
+            subject_type TEXT NOT NULL,
+            subject_id TEXT NOT NULL,
+            storage_config_id TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (subject_type, subject_id, storage_config_id)
+          )
+        `
+        )
+        .run();
+
+      await db
+        .prepare(
+          `CREATE INDEX IF NOT EXISTS idx_psa_storage_config_id ON ${DbTables.PRINCIPAL_STORAGE_ACL}(storage_config_id)`
+        )
+        .run();
+
+      console.log("版本19：principal_storage_acl 表检查/创建完成。");
+      break;
+
+    case 20:
+      // 版本20：api_keys 表 is_guest -> is_enable 启用位迁移 + 默认游客 Key 补齐
+      console.log("版本20：检查并迁移 api_keys.is_guest -> is_enable...");
+      await migrateApiKeysIsGuestToIsEnable(db);
+      console.log("版本20：api_keys 启用位(is_enable) 迁移完成。");
+
+      console.log("版本20：检查并创建默认游客 API 密钥...");
+      await createDefaultGuestApiKey(db);
+      console.log("版本20：默认游客 API 密钥检查/创建完成。");
+      break;
+
+    case 21:
+      // 版本21：为 pastes 表添加 title 和 is_public 字段，并补充索引；同时创建 fs_meta 表
+      console.log("版本21：为 pastes 表添加 title 和 is_public 字段...");
+      await addTableField(db, DbTables.PASTES, "title", "title TEXT");
+      await addTableField(db, DbTables.PASTES, "is_public", "is_public BOOLEAN NOT NULL DEFAULT 1");
+      await db.prepare(`CREATE INDEX IF NOT EXISTS idx_pastes_is_public ON ${DbTables.PASTES}(is_public)`).run();
+      console.log("版本21：pastes 表 title / is_public 字段与索引检查/创建完成。");
+
+      console.log("版本21：检查并创建 fs_meta 目录 Meta 表...");
+      await createFsMetaTables(db);
+      console.log("版本21：fs_meta 表及其索引检查/创建完成。");
+      break;
+
+    case 22:
+      // 版本22：将 WebDAV 上传模式设置迁移为 single/chunked
+      console.log("版本22：迁移 webdav_upload_mode 设置到 single/chunked...");
+      await migrateWebDavUploadModeToSingleChunked(db);
       break;
 
     default:
@@ -758,7 +989,12 @@ async function migrateToBitFlagPermissions(db) {
     const columnInfo = await db.prepare(`PRAGMA table_info(${DbTables.API_KEYS})`).all();
     const existingColumns = new Set(columnInfo.results.map((col) => col.name));
 
-    if (!existingColumns.has("permissions") || !existingColumns.has("role") || !existingColumns.has("is_guest")) {
+    // 仅当还没有 permissions/role/is_enable 结构时才做整表重建（老版本布尔权限 -> 位标志）
+    if (
+      !existingColumns.has("permissions") ||
+      !existingColumns.has("role") ||
+      (!existingColumns.has("is_enable") && !existingColumns.has("is_guest"))
+    ) {
       console.log("检测到需要完整的表结构迁移");
 
       // 创建新表结构并迁移数据
@@ -771,7 +1007,7 @@ async function migrateToBitFlagPermissions(db) {
           permissions INTEGER DEFAULT 0,
           role TEXT DEFAULT 'GENERAL',
           basic_path TEXT DEFAULT '/',
-          is_guest BOOLEAN DEFAULT 0,
+          is_enable BOOLEAN DEFAULT 0,
           last_used DATETIME,
           created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
           expires_at DATETIME NOT NULL
@@ -794,7 +1030,7 @@ async function migrateToBitFlagPermissions(db) {
           await db
             .prepare(
               `INSERT INTO ${DbTables.API_KEYS}_new
-             (id, name, key, permissions, role, basic_path, is_guest, last_used, created_at, expires_at)
+             (id, name, key, permissions, role, basic_path, is_enable, last_used, created_at, expires_at)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             )
             .bind(
@@ -804,7 +1040,7 @@ async function migrateToBitFlagPermissions(db) {
               permissions,
               role,
               keyRecord.basic_path || "/",
-              role === "GUEST" ? 1 : 0,
+              0,
               keyRecord.last_used,
               keyRecord.created_at,
               keyRecord.expires_at
@@ -821,6 +1057,127 @@ async function migrateToBitFlagPermissions(db) {
     }
   } catch (error) {
     console.error("位标志权限系统迁移失败:", error);
+  }
+}
+
+/**
+ * 将 WebDAV 上传模式设置迁移为 single/chunked
+ * 兼容旧值：
+ *  - direct/stream -> single
+ *  - multipart     -> chunked
+ *  - 其它值        -> 保持不变
+ * @param {D1Database} db - D1数据库实例
+ */
+async function migrateWebDavUploadModeToSingleChunked(db) {
+  console.log("开始迁移 webdav_upload_mode 设置到 single/chunked...");
+
+  try {
+    const row = await db
+      .prepare(`SELECT key, value, options FROM ${DbTables.SYSTEM_SETTINGS} WHERE key = ?`)
+      .bind("webdav_upload_mode")
+      .first();
+
+    if (!row) {
+      console.log("未找到 webdav_upload_mode 设置，跳过迁移");
+      return;
+    }
+
+    let value = row.value;
+    if (value === "direct" || value === "stream") {
+      value = "single";
+    } else if (value === "multipart") {
+      value = "chunked";
+    }
+
+    const options = JSON.stringify([
+      { value: "single", label: "单次上传" },
+      { value: "chunked", label: "分块上传" },
+    ]);
+
+    const now = new Date().toISOString();
+
+    await db
+      .prepare(
+        `UPDATE ${DbTables.SYSTEM_SETTINGS}
+         SET value = ?, options = ?, updated_at = ?
+         WHERE key = 'webdav_upload_mode'`
+      )
+      .bind(value, options, now)
+      .run();
+
+    console.log("webdav_upload_mode 设置迁移完成:", value);
+  } catch (error) {
+    console.error("迁移 webdav_upload_mode 设置失败:", error);
+  }
+}
+
+/**
+ * 将已有的 api_keys.is_guest 列迁移为 is_enable（启用位）
+ * 兼容以下情况：
+ *  - 只有 is_guest：尝试重命名为 is_enable，失败则新增 is_enable 并复制数据；
+ *  - 同时存在 is_guest 和 is_enable：以 is_guest 的值为准覆盖 is_enable，然后尝试删除 is_guest；
+ *  - 只有 is_enable：不做任何操作。
+ * @param {D1Database} db
+ */
+async function migrateApiKeysIsGuestToIsEnable(db) {
+  console.log("开始迁移 api_keys 表的 is_guest -> is_enable...");
+
+  const columnInfo = await db.prepare(`PRAGMA table_info(${DbTables.API_KEYS})`).all();
+  const existingColumns = new Set(columnInfo.results.map((col) => col.name));
+
+  const hasIsGuest = existingColumns.has("is_guest");
+  const hasIsEnable = existingColumns.has("is_enable");
+
+  if (!hasIsGuest && !hasIsEnable) {
+    console.log("api_keys 表不存在 is_guest / is_enable 字段，跳过迁移");
+    return;
+  }
+
+  if (hasIsGuest && !hasIsEnable) {
+    // 优先尝试使用 SQLite 原生重命名列语法
+    try {
+      console.log("检测到仅存在 is_guest，尝试重命名为 is_enable...");
+      await db.prepare(`ALTER TABLE ${DbTables.API_KEYS} RENAME COLUMN is_guest TO is_enable`).run();
+      console.log("成功将 is_guest 列重命名为 is_enable");
+      return;
+    } catch (error) {
+      console.warn("重命名 is_guest -> is_enable 失败，将使用添加列 + 复制数据方案：", error);
+
+      // 添加 is_enable 列（如果不存在）
+      await db.prepare(`ALTER TABLE ${DbTables.API_KEYS} ADD COLUMN is_enable BOOLEAN DEFAULT 0`).run();
+      // 将旧列的数据复制过来
+      await db.prepare(`UPDATE ${DbTables.API_KEYS} SET is_enable = COALESCE(is_guest, 0)`).run();
+
+      // 尝试删除旧列（如果 SQLite 版本支持）
+      try {
+        await removeTableField(db, DbTables.API_KEYS, "is_guest");
+      } catch (dropError) {
+        console.warn("删除 is_guest 列失败，将保留旧列但在代码中忽略：", dropError);
+      }
+      return;
+    }
+  }
+
+  if (hasIsGuest && hasIsEnable) {
+    console.log("检测到同时存在 is_guest 和 is_enable，使用 is_guest 覆盖 is_enable...");
+    await db
+      .prepare(`UPDATE ${DbTables.API_KEYS} SET is_enable = COALESCE(is_guest, is_enable, 0)`)
+      .run()
+      .catch((error) => {
+        console.error("同步 is_guest 到 is_enable 时出错：", error);
+      });
+
+    // 同样尝试删除旧列
+    try {
+      await removeTableField(db, DbTables.API_KEYS, "is_guest");
+    } catch (dropError) {
+      console.warn("删除 is_guest 列失败，将保留旧列但在代码中忽略：", dropError);
+    }
+    return;
+  }
+
+  if (!hasIsGuest && hasIsEnable) {
+    console.log("api_keys 已使用 is_enable 列，不需要迁移 is_guest");
   }
 }
 
@@ -864,7 +1221,8 @@ async function addPreviewSettings(db) {
   const previewSettings = [
     {
       key: "preview_text_types",
-      value: "txt,htm,html,xml,java,properties,sql,js,md,json,conf,ini,vue,php,py,bat,yml,go,sh,c,cpp,h,hpp,tsx,vtt,srt,ass,rs,lrc,dockerfile,makefile,gitignore,license,readme",
+      value:
+        "txt,htm,html,xml,java,properties,sql,js,md,json,conf,ini,vue,php,py,bat,yml,yaml,go,sh,c,cpp,h,hpp,tsx,vtt,srt,ass,rs,lrc,dockerfile,makefile,gitignore,license,readme",
       description: "支持预览的文本文件扩展名，用逗号分隔",
       type: "textarea",
       group_id: 2,
@@ -1162,7 +1520,7 @@ export async function checkAndInitDatabase(db) {
       DbTables.ADMINS,
       DbTables.ADMIN_TOKENS,
       DbTables.API_KEYS,
-      DbTables.S3_CONFIGS,
+      DbTables.STORAGE_CONFIGS,
       DbTables.FILES,
       DbTables.FILE_PASSWORDS,
       DbTables.SYSTEM_SETTINGS,
@@ -1187,14 +1545,15 @@ export async function checkAndInitDatabase(db) {
     const versionSetting = await db.prepare(`SELECT value FROM ${DbTables.SYSTEM_SETTINGS} WHERE key = 'schema_version'`).first();
 
     const currentVersion = versionSetting ? parseInt(versionSetting.value) : 0;
-    const targetVersion = 17; // 当前最新版本
+    const targetVersion = 22; // 当前最新版本
 
     if (currentVersion < targetVersion) {
       console.log(`需要更新数据库结构，当前版本:${currentVersion}，目标版本:${targetVersion}`);
 
       if (currentVersion === 0 && !needsTablesCreation) {
-        // 如果版本为0但表已存在，表示是旧数据库，执行完整初始化确保所有表创建
-        await initDatabase(db);
+        // 如果版本为0且所有必需表都已存在，表示是旧数据库
+        // 为保留已有数据，此处应执行迁移脚本而不是完整初始化
+        await migrateDatabase(db, 0, targetVersion);
       } else if (currentVersion > 0) {
         // 执行迁移脚本
         await migrateDatabase(db, currentVersion, targetVersion);
